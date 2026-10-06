@@ -66,6 +66,7 @@ export function relevant(concept: Concept, need: HouseholdNeed | null, p: Produc
   if (!p.available || !(p.price > 0)) return false;
   const text = p.name + ' ' + (p.brand ?? '');
   if (concept.mustInclude?.length && !concept.mustInclude.some((w) => has(text, w))) return false;
+  if (concept.alsoInclude?.length && !concept.alsoInclude.some((w) => has(text, w))) return false;
   if (concept.exclude?.some((w) => has(text, w))) return false;
   if (need?.forbiddenBrands.some((b) => has(text, b))) return false;
   const own = norm([concept.label, concept.query, ...concept.synonyms, ...(concept.mustInclude ?? [])].join(' '));

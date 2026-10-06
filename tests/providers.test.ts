@@ -68,3 +68,16 @@ test('matching rejects look-alike products from branch files', async () => {
   assert.equal(pick('MILK', [['יוגורט של פעם חלב עיזים', 6], ['חלב 3% קרטון 1 ל', 6.9]]), 'חלב 3% קרטון 1 ל');
   assert.equal(pick('COFFEE', [['עוגיית קרם קפה', 9], ['קפה נמס עלית 200 ג', 29.9]]), 'קפה נמס עלית 200 ג');
 });
+
+test('matching: live-catalog look-alikes found in the real run', async () => {
+  const { chooseProduct } = await import('../server/engine/match.ts');
+  const { conceptById } = await import('../server/catalog.ts');
+  const { newNeed } = await import('../server/state.ts');
+  const mk = (name: string, price: number) => ({ providerId: 'x', productId: name, name, price, available: true, source: 'live' as const, fetchedAt: '' });
+  const pick = (id: string, names: [string, number][], flex: 'category_flexible' | 'exact_product' = 'category_flexible') =>
+    chooseProduct(conceptById.get(id)!, { ...newNeed(conceptById.get(id)!, 2, 0), flexibility: flex }, names.map(([n, p]) => mk(n, p)))?.product.name;
+  assert.equal(pick('EGGS', [['ביצי קינדר בואנו לחנוכה', 19.5], ['ביצים גדולות L 12 יח', 14.9]]), 'ביצים גדולות L 12 יח');
+  assert.equal(pick('COLA_ZERO', [['ספרייט זירו 1.5 ליטר', 7.65], ['קוקה קולה זירו 6*1.5 ליטר', 39.9]]), 'קוקה קולה זירו 6*1.5 ליטר');
+  assert.equal(pick('PASTA', [['פסטה ניוקי 500 גר', 7.45], ['פסטה פנה 500 גרם', 6.9]]), 'פסטה פנה 500 גרם');
+  assert.equal(pick('TOMATOES', [['עגבניות מקולפות שלמות', 4.97], ['עגבניות', 7.9]]), 'עגבניות');
+});
