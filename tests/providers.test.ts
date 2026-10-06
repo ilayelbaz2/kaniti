@@ -55,3 +55,16 @@ test('parseSize handles multipacks and kg', () => {
   assert.deepEqual(parseSize('קולה 6*1.5 ליטר'), { amount: 9000, unit: 'ml' });
   assert.deepEqual(parseSize('אורז 1 ק"ג'), { amount: 1000, unit: 'g' });
 });
+
+test('matching rejects look-alike products from branch files', async () => {
+  const { chooseProduct } = await import('../server/engine/match.ts');
+  const { conceptById } = await import('../server/catalog.ts');
+  const { newNeed } = await import('../server/state.ts');
+  const mk = (name: string, price: number) => ({ providerId: 'b', productId: name, name, price, available: true, source: 'branch_data' as const, fetchedAt: '' });
+  const pick = (id: string, names: [string, number][]) => chooseProduct(conceptById.get(id)!, { ...newNeed(conceptById.get(id)!, 2, 0), flexibility: 'category_flexible' }, names.map(([n, p]) => mk(n, p)))?.product.name;
+  assert.equal(pick('EGGS', [['אטריות ביצים דקות 400', 6], ['ביצים L 12 יח', 13.9]]), 'ביצים L 12 יח');
+  assert.equal(pick('TOMATOES', [['מיץ עגבניות עם מלח 1 ל', 7], ['עגבניות שרי', 12], ['עגבניה', 6.9]]), 'עגבניה');
+  assert.equal(pick('CUCUMBERS', [['תחליב רחצה מלפפון ולימון', 9], ['מלפפון', 5.9]]), 'מלפפון');
+  assert.equal(pick('MILK', [['יוגורט של פעם חלב עיזים', 6], ['חלב 3% קרטון 1 ל', 6.9]]), 'חלב 3% קרטון 1 ל');
+  assert.equal(pick('COFFEE', [['עוגיית קרם קפה', 9], ['קפה נמס עלית 200 ג', 29.9]]), 'קפה נמס עלית 200 ג');
+});

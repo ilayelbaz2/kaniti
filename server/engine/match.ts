@@ -44,20 +44,40 @@ export function brandOf(p: ProductSearchResult, concept: Concept): string | unde
   return concept.brands.find((b) => has(p.name, b));
 }
 
+// Words that turn a product into something else ("מיץ עגבניות", "אטריות ביצים", "תחליב רחצה מלפפון").
+// Ignored when the concept itself uses the word (e.g. ממרח שוקולד, מעדנים).
+const NOISE = ['מיץ', 'תחליב', 'שמפו', 'סבון', 'עוגי', 'עוגה', 'אטריות', 'רוטב', 'ממרח', 'יוגורט', 'מעדן', 'גלידה', 'חטיף', 'סלט', 'קרם', 'משקה', 'בטעם', 'רסק', 'אבקת', 'תרסיס', 'מגבונ', 'ופל', 'מרק', 'קוסקוס', 'פירורי', 'מילוי', 'ממולא', 'שייק', 'אוזני'];
+const words = (s: string) => norm(s).split(/[\s,.()/+*]+/).filter(Boolean);
+
+/** How well a product name fits the concept: core term near the start of the name ranks highest. */
+export function fit(concept: Concept, p: ProductSearchResult): number {
+  const w = words(p.name);
+  const must = (concept.mustInclude ?? []).map(norm);
+  let score = 0;
+  if (must.some((m) => w.slice(0, 2).some((x) => x.replace(/^[והב]/, '').startsWith(m) || x.startsWith(m)))) score += 2;
+  for (const t of words(concept.query)) if (t.length > 1 && !/^\d/.test(t) && has(p.name, t)) score += 1;
+  return score;
+}
+
 export function relevant(concept: Concept, need: HouseholdNeed | null, p: ProductSearchResult): boolean {
   if (!p.available || !(p.price > 0)) return false;
   const text = p.name + ' ' + (p.brand ?? '');
   if (concept.mustInclude?.length && !concept.mustInclude.some((w) => has(text, w))) return false;
   if (concept.exclude?.some((w) => has(text, w))) return false;
   if (need?.forbiddenBrands.some((b) => has(text, b))) return false;
+  const own = norm([concept.label, concept.query, ...concept.synonyms, ...(concept.mustInclude ?? [])].join(' '));
+  if (words(p.name).some((x) => NOISE.some((n) => (x.startsWith(n) || x.slice(1).startsWith(n)) && !own.includes(n)))) return false;
   return true;
 }
 
 export type Choice = { product: ProductSearchResult; substituted: boolean; usualName?: string; note?: string } | null;
 
 export function chooseProduct(concept: Concept, need: HouseholdNeed, candidates: ProductSearchResult[]): Choice {
-  const pool = candidates.filter((p) => relevant(concept, need, p));
-  if (!pool.length) return null;
+  const all = candidates.filter((p) => relevant(concept, need, p));
+  if (!all.length) return null;
+  // Only the best-fitting names compete on price (so "ביצים L" beats a cheaper "ביצים לבישול" side product).
+  const best = Math.max(...all.map((p) => fit(concept, p)));
+  const pool = all.filter((p) => fit(concept, p) >= best - 1);
   const sorted = [...pool].sort(cheaper);
   const cheapest = sorted[0];
   const preferred = sorted.filter((p) =>

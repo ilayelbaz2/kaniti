@@ -80,9 +80,10 @@ export function parsePromoFull(xml: string): Map<string, { price: number; minQty
     const text = str(o.promotiondescription);
     // Cerberus puts the price on the promotion; Shufersal on each PromotionItem (inside Groups).
     for (const it of walk(o.promotionitems ?? o.groups, ['itemcode'])) {
-      const minQty = Math.max(1, fl(it.minqty ?? o.minqty));
+      // DiscountedPrice = price for MinQty units. (DiscountedPricePerMida is per unit of *measure*, e.g. per 100g — not usable.)
+      const minQty = Math.max(1, Math.round(fl(it.minqty ?? o.minqty)));
       const total = fl(it.discountedprice ?? o.discountedprice);
-      const perUnit = fl(it.discountedpricepermida ?? o.discountedpricepermida) || (total && minQty ? total / minQty : 0);
+      const perUnit = total > 0 ? total / minQty : 0;
       if (!(perUnit > 0)) continue;
       const code = str(it.itemcode);
       const prev = map.get(code);
@@ -229,7 +230,8 @@ export async function loadBranch(chain: PhysicalChain, storeId: string): Promise
   const promos = promoXml ? parsePromoFull(promoXml) : new Map();
   for (const it of items) {
     const p = promos.get(it.code);
-    if (p && p.price < it.price) { it.promoPrice = p.price; it.promoText = p.text; it.promoMinQty = p.minQty; }
+    // Sanity: ignore "promos" deeper than 70% — in the feeds those are coupons, gifts or unit-of-measure artefacts.
+    if (p && p.price < it.price && p.price >= it.price * 0.3) { it.promoPrice = p.price; it.promoText = p.text; it.promoMinQty = p.minQty; }
   }
   const data: BranchData = { items, fileDate: nowIso(), files: used, promoCount: promos.size };
   fs.mkdirSync(CACHE_DIR, { recursive: true });
