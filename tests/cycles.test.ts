@@ -82,7 +82,9 @@ test('two shopping cycles', async () => {
   await say('#build 14 force');
   const b2 = store.basket()!;
   assert.notEqual(b2.id, b1.id);
-  assert.ok(!item('TUNA') || item('TUNA')!.quantity < (b1.items.find((i) => i.needId === 'TUNA')?.quantity ?? 0), 'tuna stocked from last time');
+  // Tuna was bought last cycle → no longer "ran out"; it's either skipped or a planned top-up.
+  assert.ok(!item('TUNA') || !item('TUNA')!.reason.startsWith('נגמר בבית'), 'tuna stock known from purchase');
+  assert.ok(b1.items.find((i) => i.needId === 'TUNA')!.reason.startsWith('נגמר בבית'));
   assert.ok(!b2.items.some((i) => i.needId === 'CREAM_CHEESE' && i.reason.includes('דלג')), 'temporary skip did not carry over');
   assert.ok(store.need('BAMBA')!.removedCount >= 1);
   assert.equal(store.need('TUNA')!.flexibility, 'category_flexible');

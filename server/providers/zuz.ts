@@ -77,7 +77,7 @@ export function zuzProvider(chain: ZuzChain): GroceryProvider {
       const pick = local.find((b) => /אונליין|online|אינטרנט/i.test(b.name)) ?? local[0];
       if (pick) {
         kvSet(key, pick.id);
-        return { providerId: chain.id, delivers: true, checkedLive: true, deliveryFee: chain.fee, minOrder: chain.minOrder, note: `יש סניף ב${address.city} (${pick.name}) — לפי רשימת הסניפים, לא אומת מול הכתובת` };
+        return { providerId: chain.id, delivers: true, checkedLive: true, deliveryFee: chain.fee, minOrder: chain.minOrder, note: `יש סניף ב${address.city} (${pick.name}, #${pick.id}) — לפי רשימת הסניפים, לא אומת מול הכתובת` };
       }
       if (!chain.defaultBranch && list[0]) kvSet(key, list[0].id);
       return { providerId: chain.id, delivers: null, checkedLive: true, deliveryFee: chain.fee, minOrder: chain.minOrder, note: `אין סניף של הרשת ב${address.city}. ייתכן שמשלחים ממרכז הפצה — לא אומת` };
@@ -87,7 +87,13 @@ export function zuzProvider(chain: ZuzChain): GroceryProvider {
       if (!bid) { const list = await branches(); bid = list[0]?.id ?? 0; kvSet(key, bid); }
       const url = `${chain.host}/v2/retailers/${chain.retailerId}/branches/${bid}/products?appId=4&languageId=1&isSearch=true&from=0&size=24&query=${encodeURIComponent(query)}&filters=${encodeURIComponent(SEARCH_FILTERS)}`;
       const res = await httpFetch(url, { headers: { Accept: 'application/json' } });
-      return parseZuz(chain.id, (await res.json()) as { products?: ZProduct[] });
+      const rows = parseZuz(chain.id, (await res.json()) as { products?: ZProduct[] });
+      if (!rows.length && chain.defaultBranch && bid !== chain.defaultBranch) {
+        // Some branches return an empty online catalog — fall back to the chain's main online branch.
+        const res2 = await httpFetch(url.replace(`/branches/${bid}/`, `/branches/${chain.defaultBranch}/`), { headers: { Accept: 'application/json' } });
+        return parseZuz(chain.id, (await res2.json()) as { products?: ZProduct[] });
+      }
+      return rows;
     },
   };
 }

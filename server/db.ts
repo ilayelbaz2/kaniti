@@ -92,12 +92,10 @@ export const store = {
     const ins = db.prepare('INSERT INTO prices (provider_id, product_id, need_id, name, price, promo_price, source, json, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     for (const r of rows) ins.run(r.providerId, r.productId, needId, r.name, r.price, r.promoPrice ?? null, r.source, JSON.stringify(r), r.fetchedAt);
   },
-  /** Median regular price seen for this need over the last N days (our "normal price"). */
-  normalPrice(needId: string, providerId: string | null, sinceIso: string): number | null {
-    const rows = (providerId
-      ? db.prepare('SELECT price FROM prices WHERE need_id = ? AND provider_id = ? AND fetched_at >= ?').all(needId, providerId, sinceIso)
-      : db.prepare('SELECT price FROM prices WHERE need_id = ? AND fetched_at >= ?').all(needId, sinceIso)) as { price: number }[];
-    if (!rows.length) return null;
+  /** Median regular price we've seen for this exact product at this provider (our "normal price"). */
+  normalPrice(providerId: string, productId: string, sinceIso: string): number | null {
+    const rows = db.prepare('SELECT price FROM prices WHERE provider_id = ? AND product_id = ? AND fetched_at >= ?').all(providerId, productId, sinceIso) as { price: number }[];
+    if (rows.length < 2) return null;
     const v = rows.map((r) => r.price).sort((a, b) => a - b);
     return v[Math.floor(v.length / 2)];
   },

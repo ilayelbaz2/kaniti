@@ -246,10 +246,15 @@ const norm = (s: string) => s.replace(/["'׳״\-]/g, '').replace(/\s+/g, ' ').tr
 /** Simple token search over a branch's price list. */
 export function searchBranch(items: BranchItem[], query: string): BranchItem[] {
   const tokens = norm(query).split(' ').filter((t) => t.length > 1 && !/^\d/.test(t));
+  if (!tokens.length) return [];
   const scored = items
-    .map((it) => { const n = norm(it.name); return { it, score: tokens.filter((t) => n.includes(t)).length }; })
-    .filter((x) => x.score > 0 && x.score >= Math.min(tokens.length, Math.max(1, tokens.length - 1)));
-  return scored.sort((a, b) => b.score - a.score).slice(0, 25).map((x) => x.it);
+    .map((it) => {
+      const n = norm(it.name);
+      const hits = tokens.filter((t) => n.includes(t)).length;
+      return { it, hits, score: hits * 2 + (n.startsWith(tokens[0]) ? 3 : 0) };
+    })
+    .filter((x) => x.hits >= Math.min(tokens.length, Math.max(1, tokens.length - 1)));
+  return scored.sort((a, b) => b.score - a.score).slice(0, 60).map((x) => x.it);
 }
 
 export function physicalProvider(chain: PhysicalChain, storeId: string, storeName: string): GroceryProvider {

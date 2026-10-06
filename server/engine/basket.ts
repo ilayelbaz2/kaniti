@@ -17,11 +17,11 @@ export const emptyPriceBook = (): PriceBook => ({ byNeed: new Map(), failures: [
 const ceilPacks = (units: number, packSize: number) => Math.max(1, Math.ceil(units / packSize - 0.15));
 
 /** Discount of a product vs. its regular price and vs. what we've normally seen for this need. */
-export function discountOf(needId: string, p: ProductSearchResult): number {
+export function discountOf(_needId: string, p: ProductSearchResult): number {
   const eff = effPrice(p);
   const vsShelf = p.promoPrice ? 1 - p.promoPrice / p.price : 0;
   const since = new Date(now().getTime() - 60 * 86400000).toISOString();
-  const normal = store.normalPrice(needId, p.providerId, since);
+  const normal = store.normalPrice(p.providerId, p.productId, since);
   const vsHistory = normal && normal > eff ? 1 - eff / normal : 0;
   return Math.max(vsShelf, vsHistory);
 }

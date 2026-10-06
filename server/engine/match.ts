@@ -46,16 +46,19 @@ export function brandOf(p: ProductSearchResult, concept: Concept): string | unde
 
 // Words that turn a product into something else ("מיץ עגבניות", "אטריות ביצים", "תחליב רחצה מלפפון").
 // Ignored when the concept itself uses the word (e.g. ממרח שוקולד, מעדנים).
-const NOISE = ['מיץ', 'תחליב', 'שמפו', 'סבון', 'עוגי', 'עוגה', 'אטריות', 'רוטב', 'ממרח', 'יוגורט', 'מעדן', 'גלידה', 'חטיף', 'סלט', 'קרם', 'משקה', 'בטעם', 'רסק', 'אבקת', 'תרסיס', 'מגבונ', 'ופל', 'מרק', 'קוסקוס', 'פירורי', 'מילוי', 'ממולא', 'שייק', 'אוזני'];
+const NOISE = ['מיץ', 'תחליב', 'שמפו', 'סבון', 'עוגי', 'עוגה', 'אטריות', 'איטריות', 'רוטב', 'ממרח', 'יוגורט', 'מעדן', 'גלידה', 'חטיף', 'סלט', 'קרם', 'משקה', 'בטעם', 'רסק', 'אבקת', 'תרסיס', 'מגבונ', 'ופל', 'מרק', 'קוסקוס', 'פירורי', 'מילוי', 'ממולא', 'שייק', 'אוזני', 'ביסקוויט', 'שוקו', 'קוביות', 'כבוש', 'במלח', 'לאטה', 'סניקרס'];
 const words = (s: string) => norm(s).split(/[\s,.()/+*]+/).filter(Boolean);
 
 /** How well a product name fits the concept: core term near the start of the name ranks highest. */
 export function fit(concept: Concept, p: ProductSearchResult): number {
-  const w = words(p.name);
+  const w = words(p.name).map((x) => x.replace(/^[והב](?=..)/, ''));
   const must = (concept.mustInclude ?? []).map(norm);
+  const starts = (x: string | undefined) => !!x && must.some((m) => x.startsWith(m) || norm(p.name).startsWith(m));
   let score = 0;
-  if (must.some((m) => w.slice(0, 2).some((x) => x.replace(/^[והב]/, '').startsWith(m) || x.startsWith(m)))) score += 2;
+  if (starts(w[0])) score += 3;
+  else if (starts(w[1])) score += 1;
   for (const t of words(concept.query)) if (t.length > 1 && !/^\d/.test(t) && has(p.name, t)) score += 1;
+  if (concept.prefer && concept.prefer.test(p.name + ' ' + (p.sizeText ?? ''))) score += 2;
   return score;
 }
 
