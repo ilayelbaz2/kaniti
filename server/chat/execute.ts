@@ -1,0 +1,314 @@
+// Runs typed actions against app state and produces chat replies (text + rich components).
+// The wording here is deterministic; the LLM (if any) only chooses actions.
+import type { ChatComponent, ChatMessage, Flexibility } from '../../shared/types.ts';
+import { store, kvGet, kvSet } from '../db.ts';
+import { nowIso, uid } from '../clock.ts';
+import { ensureNeed, estimateStock, fuzzyStock, getConcept, logEvent, setStock, updateNeed } from '../state.ts';
+import { checkInQuestions, explainItem, flexText, fmt } from '../engine/basket.ts';
+import { compareBasket, explainStoreChoice } from '../engine/compare.ts';
+import * as svc from '../service.ts';
+import type { Action } from './actions.ts';
+
+type Out = { lines: string[]; components: ChatComponent[]; changes: string[] };
+type Pending = { horizon: number; needIds: string[] };
+
+const FLEX_LABEL: Record<Flexibility, string> = {
+  exact_product: 'רק המוצר הקבוע',
+  brand_flexible: 'מותג מועדף, מחליף אם משתלם',
+  category_flexible: 'המותג לא חשוב — לפי מחיר',
+  exploratory: 'פתוחים לגיוון',
+};
+
+export async function executeActions(actions: Action[], extraText?: string): Promise<ChatMessage> {
+  const out: Out = { lines: [], components: [], changes: [] };
+  if (extraText) out.lines.push(extraText);
+  let stateTouched = false;
+  let basketHandled = false;
+
+  for (const a of actions) {
+    switch (a.type) {
+      case 'updateHouseholdStock': {
+        const n = ensureNeed(a.needId);
+        const c = getConcept(a.needId);
+        let qty: number, conf: number;
+        if (a.qty !== undefined) { qty = a.qty; conf = 0.95; }
+        else { const f = fuzzyStock(n, a.level ?? 'some'); qty = f.qty; conf = f.confidence; }
+        setStock(a.needId, qty, conf, a.raw);
+        if (!n.active && qty === 0) updateNeed(a.needId, { active: true });
+        out.changes.push(`${c.emoji} ${c.label}: ${a.level === 'none' || qty === 0 ? 'נגמר' : a.level === 'lots' ? `יש הרבה (~${fmt(qty)} ${c.stockUnit})` : `~${fmt(qty)} ${c.stockUnit}`}`);
+        resolvePending(a.needId);
+        stateTouched = true;
+        break;
+      }
+      case 'updatePreference': {
+        const n = ensureNeed(a.needId);
+        const c = getConcept(a.needId);
+        const patch: Parameters<typeof updateNeed>[1] = {};
+        if (a.flexibility) { patch.flexibility = a.flexibility; patch.flexConfidence = 0.95; }
+        if (a.preferredBrands) patch.preferredBrands = a.preferredBrands;
+        if (a.forbiddenBrands) patch.forbiddenBrands = [...new Set([...n.forbiddenBrands, ...a.forbiddenBrands])];
+        if (a.dealSensitivity) patch.dealSensitivity = a.dealSensitivity;
+        if (a.neverSuggest !== undefined) patch.neverSuggest = a.neverSuggest;
+        if (a.active !== undefined) patch.active = a.active;
+        if (a.dislikeCurrent) {
+          const current = store.basket()?.items.find((i) => i.needId === a.needId)?.product;
+          const name = current?.name ?? n.lastProductName;
+          const brand = current?.brand ?? c.brands.find((b) => name?.includes(b));
+          if (brand) patch.forbiddenBrands = [...new Set([...n.forbiddenBrands, brand])];
+          if (n.lastProductName === name) patch.lastProductName = undefined;
+          out.changes.push(`${c.emoji} ${c.label}: לא להציע ${brand ?? name ?? 'את המוצר הזה'}`);
+          if (current) { try { svc.replaceItem(a.needId); } catch { /* nothing to replace */ } }
+        }
+        updateNeed(a.needId, patch, a.statement);
+        const updated = store.need(a.needId)!;
+        if (a.neverSuggest) {
+          out.changes.push(`${c.emoji} ${c.label}: לא להציע יותר (קבוע)`);
+          if (store.basket()?.items.some((i) => i.needId === a.needId)) svc.removeItem(a.needId, false);
+        } else if (a.flexibility || a.preferredBrands) {
+          out.changes.push(`${c.emoji} ${c.label}: ${FLEX_LABEL[updated.flexibility]}${updated.preferredBrands.length ? ` (${updated.preferredBrands.join(', ')})` : ''}${updated.forbiddenBrands.length ? ` · בלי ${updated.forbiddenBrands.join(', ')}` : ''} — קבוע`);
+        } else if (a.dealSensitivity) {
+          out.changes.push(`${c.emoji} ${c.label}: אראה לכם כשיש מחיר טוב`);
+        }
+        stateTouched = true;
+        break;
+      }
+      case 'setBudget': {
+        svc.setBudget(a.cap);
+        out.changes.push(a.cap ? `💰 תקרה לסל הזה: ₪${a.cap}` : '💰 הסרתי את התקרה');
+        stateTouched = true;
+        break;
+      }
+      case 'removeBasketItem': {
+        const c = getConcept(a.needId);
+        svc.removeItem(a.needId, a.temporary);
+        out.changes.push(`${c.emoji} ${c.label}: ${a.temporary ? 'לא בקנייה הזאת (רק הפעם)' : 'הוסר'}`);
+        const n = store.need(a.needId);
+        if (n && n.removedCount >= 2 && !n.neverSuggest) {
+          out.components.push({
+            type: 'learning', needId: a.needId, text: `שמתי לב שאתם מורידים ${c.label} כבר ${n.removedCount} פעמים. להפסיק להכניס את זה?`,
+            options: [{ label: 'כן, תפסיק', send: `#never ${a.needId}` }, { label: 'לא, רק הפעם', send: '#noop' }],
+          });
+        }
+        basketHandled = true;
+        break;
+      }
+      case 'generateBasket': {
+        const pending = kvGet<Pending>('pendingCheckin');
+        if (!a.skipCheckin) {
+          const qs = checkInQuestions(a.horizonDays, store.basket()?.status === 'building' ? store.basket()!.tempSkips : []);
+          if (qs.length) {
+            for (const q of qs) updateNeed(q.needId, { lastAskedAt: nowIso() });
+            kvSet('pendingCheckin', { horizon: a.horizonDays, needIds: qs.map((q) => q.needId) } satisfies Pending);
+            out.lines.push(qs.length === 1 ? 'רגע לפני שאני בונה — שאלה אחת:' : `רגע לפני שאני בונה — ${qs.length} שאלות קצרות:`);
+            for (const q of qs) out.components.push({ type: 'question', question: q });
+            out.components.push({ type: 'quick_replies', options: [{ label: 'פשוט תבנה', send: `#build ${a.horizonDays} force` }] });
+            basketHandled = true;
+            break;
+          }
+        }
+        if (pending) kvSet('pendingCheckin', null);
+        await build(out, a.horizonDays);
+        basketHandled = true;
+        break;
+      }
+      case 'addBasketItem': {
+        const { item } = await svc.addItem(a);
+        const price = item.product ? ` · ₪${item.product.price}${item.product.promoText ? ` (${item.product.promoText})` : ''}` : '';
+        if (item.condition) {
+          out.changes.push(`${item.emoji} ${item.label}: ${item.condition.met ? `${item.quantity} × ${item.unit} נכנסו לסל — ${item.condition.note}` : item.condition.met === false ? `מחכה למחיר טוב — ${item.condition.note}` : 'נכנס בתנאי שיהיה מחיר טוב (אבדוק כשיהיו מחירים)'}`);
+        } else out.changes.push(`${item.emoji} ${item.label}: ${item.quantity} × ${item.unit}${price}`);
+        basketHandled = true;
+        break;
+      }
+      case 'updateBasketQuantity': {
+        const c = getConcept(a.needId);
+        try {
+          svc.setQuantity(a.needId, a.quantity);
+          out.changes.push(`${c.emoji} ${c.label}: ${a.quantity} × ${c.packLabel}`);
+        } catch {
+          const { item } = await svc.addItem({ needId: a.needId, quantity: a.quantity });
+          out.changes.push(`${item.emoji} ${item.label}: ${item.quantity} × ${item.unit}`);
+        }
+        basketHandled = true;
+        break;
+      }
+      case 'replaceBasketItem': {
+        const c = getConcept(a.needId);
+        try {
+          const r = svc.replaceItem(a.needId);
+          if (!r.product) out.lines.push(`לא מצאתי חלופה ל${c.label} כרגע.`);
+          else {
+            out.changes.push(`${c.emoji} ${c.label}: הוחלף ל־${r.product.name}`);
+            maybeFlexCard(out, a.needId, r.replacements);
+          }
+        } catch { out.lines.push(`${c.label} לא בסל כרגע.`); }
+        basketHandled = true;
+        break;
+      }
+      case 'searchProductPrices': {
+        const needId = a.needId;
+        if (!needId) { out.lines.push('על איזה מוצר לבדוק?'); break; }
+        const r = await svc.priceLookup(needId);
+        if (!r.rows.length) out.lines.push(r.failures.length ? `לא הצלחתי לקבל מחירים ל${r.concept.label} (${r.failures.join(', ')} לא זמינות כרגע).` : `לא מצאתי ${r.concept.label} ברשתות שלכם.`);
+        else {
+          out.lines.push(`${r.concept.emoji} הכי זול ${r.concept.label} כרגע: ${r.rows[0].provider} — ₪${r.rows[0].price}`);
+          out.components.push({ type: 'prices', title: r.concept.label, rows: r.rows, failures: r.failures });
+          out.components.push({ type: 'quick_replies', options: [{ label: `תוסיף ${r.concept.label}`, send: `תוסיף ${r.concept.label}` }] });
+        }
+        break;
+      }
+      case 'searchPromotions': {
+        if (a.needId) {
+          const r = await svc.priceLookup(a.needId);
+          const promos = r.rows.filter((x) => x.promoText);
+          if (promos.length) {
+            out.lines.push(`יש מבצע על ${r.concept.label}:`);
+            out.components.push({ type: 'prices', title: r.concept.label, rows: promos, failures: r.failures });
+            out.components.push({ type: 'quick_replies', options: [{ label: 'תוסיף לסל', send: `תוסיף ${r.concept.label}` }] });
+          } else if (r.rows.length) {
+            out.lines.push(`אין כרגע מבצע על ${r.concept.label}. הכי זול: ${r.rows[0].provider} — ₪${r.rows[0].price}.`);
+          } else out.lines.push(`לא הצלחתי לבדוק את ${r.concept.label} כרגע.`);
+        } else {
+          const { deals, failures } = await svc.getDeals();
+          if (!deals.length) out.lines.push(failures.length ? 'לא הצלחתי למשוך מבצעים כרגע.' : 'אין כרגע מבצעים ששווים משהו בשבילכם.');
+          else {
+            out.lines.push('הנה מה שבאמת שווה בשבילכם:');
+            for (const d of deals.slice(0, 3)) out.components.push({ type: 'deal', deal: d });
+            out.components.push({ type: 'quick_replies', options: [{ label: 'לכל המבצעים', send: '@open:deals' }] });
+          }
+        }
+        break;
+      }
+      case 'quoteBasketAcrossProviders': {
+        const b = store.basket();
+        if (!b || b.status !== 'building' || !b.items.length) { out.lines.push('אין עדיין סל להשוות. לבנות אחד?'); out.components.push({ type: 'quick_replies', options: [{ label: 'בנה קנייה', send: '#build 14' }] }); break; }
+        const cmp = await compareBasket(b);
+        out.lines.push(cmp.recommendation.text);
+        out.components.push({ type: 'quick_replies', options: [{ label: 'לפירוט ההשוואה', send: '@open:compare' }, { label: 'קניתי — לאשר', send: '@open:confirm' }] });
+        break;
+      }
+      case 'explainBasketDecision': {
+        if (a.about === 'store') out.lines.push(explainStoreChoice());
+        else if (a.needId) out.lines.push(explainItem(a.needId, store.basket()));
+        else out.lines.push('על מה להסביר? אפשר לשאול "למה שמת טונה?" או "למה בחרת ברשת הזאת?"');
+        break;
+      }
+      case 'showStock': {
+        const rows = store.needs().filter((n) => n.active).map((n) => {
+          const c = getConcept(n.id);
+          const e = estimateStock(n);
+          const text = !e.known ? 'לא יודע' : e.qty <= 0.01 ? 'נגמר' : e.qty > n.typical14DayQty * 1.2 ? `הרבה (~${fmt(e.qty)})` : `~${fmt(e.qty)} ${c.stockUnit}`;
+          return { needId: n.id, emoji: c.emoji, label: c.label, text, value: e.qty, unit: c.stockUnit, conf: e.confidence };
+        }).sort((x, y) => x.value / (store.need(x.needId)!.typical14DayQty || 1) - y.value / (store.need(y.needId)!.typical14DayQty || 1));
+        out.lines.push('אני מעריך שנשאר:');
+        out.components.push({ type: 'stock_confirm', rows: rows.slice(0, 10).map(({ conf: _c, ...r }) => r) });
+        break;
+      }
+      case 'confirmPurchase': {
+        out.lines.push('מעולה! בוא נסמן מה בפועל נקנה, כדי שאלמד לפעם הבאה.');
+        out.components.push({ type: 'quick_replies', options: [{ label: 'לאישור הקנייה', send: '@open:confirm' }] });
+        break;
+      }
+      case 'help': {
+        out.lines.push('לא בטוח שהבנתי 🙂 אפשר למשל:');
+        out.components.push({ type: 'quick_replies', options: [
+          { label: 'בנה קנייה', send: '#build 14' }, { label: 'מה חסר בבית?', send: 'מה חסר בבית?' },
+          { label: 'מבצעים', send: '#deals' }, { label: 'איפה הכי זול?', send: '#compare' },
+        ] });
+        break;
+      }
+    }
+  }
+
+  // Stock/preference changes while a basket is open → rebuild so Basket always reflects state.
+  const b = store.basket();
+  if (stateTouched && !basketHandled && b?.status === 'building' && b.items.length) {
+    await build(out, b.horizonDays, true);
+  }
+  // Answered the last check-in question → build.
+  const pending = kvGet<Pending>('pendingCheckin');
+  if (pending && pending.needIds.length === 0) {
+    kvSet('pendingCheckin', null);
+    await build(out, pending.horizon);
+  } else if (pending && actions.every((x) => x.type === 'updateHouseholdStock')) {
+    out.components.push({ type: 'quick_replies', options: [{ label: 'פשוט תבנה', send: `#build ${pending.horizon} force` }] });
+  }
+
+  if (out.changes.length) out.components.unshift({ type: 'state_change', changes: out.changes });
+  if (!out.lines.length && out.changes.length) out.lines.push(pick(['רשמתי ✓', 'עודכן ✓', 'סגור ✓']));
+  return { id: uid('m_'), role: 'assistant', text: out.lines.join('\n'), components: out.components, createdAt: nowIso() };
+}
+
+async function build(out: Out, horizon: number, quiet = false) {
+  const { basket, failures } = await svc.buildBasket(horizon);
+  const s = svc.basketSummary(basket);
+  if (quiet) {
+    out.lines.push(`עדכנתי את הסל (${s.items} פריטים${s.total ? `, ~₪${s.total}` : ''}).`);
+    for (const n of basket.notes.filter((x) => x.includes('תקרה'))) out.lines.push(n);
+    return;
+  }
+  out.lines.push(s.items ? 'הסל מוכן 🎯' : 'נראה שיש לכם הכול בבית כרגע 🙂');
+  if (failures.length) out.lines.push(failures.map((f) => `${f.name} לא החזירה מחיר כרגע.`).join(' ') + ' המשכתי עם שאר הרשתות.');
+  if (!basket.priced) out.lines.push('בלי מחירים כרגע — בניתי לפי צריכה ומלאי.');
+  for (const n of basket.notes.filter((x) => !x.includes('לא החזירה'))) out.lines.push(n);
+  out.components.push({ type: 'basket_summary', ...s });
+  out.components.push({ type: 'quick_replies', options: [{ label: 'פתח סל', send: '@open:basket' }, { label: 'השווה רשתות', send: '#compare' }] });
+}
+
+function resolvePending(needId: string) {
+  const p = kvGet<Pending>('pendingCheckin');
+  if (p && p.needIds.includes(needId)) kvSet('pendingCheckin', { ...p, needIds: p.needIds.filter((x) => x !== needId) });
+}
+
+function maybeFlexCard(out: Out, needId: string, replacements: number) {
+  const n = store.need(needId);
+  if (!n || replacements < 1 || n.flexConfidence >= 0.9) return;
+  const c = getConcept(needId);
+  out.components.push({
+    type: 'learning', needId,
+    text: `שמתי לב שהחלפת את ה${c.label} שבחרתי. ב${c.label}, מה יותר חשוב לך?`,
+    options: [
+      { label: 'הכי זול', send: `#flex ${needId} category_flexible` },
+      { label: 'יש כמה מותגים שאני אוהב', send: `#flex ${needId} brand_flexible` },
+      { label: 'אלמד בהמשך', send: '#noop' },
+    ],
+  });
+}
+
+/** Commands from UI cards that bypass parsing. */
+export async function executeCommand(cmd: string, args: string[]): Promise<ChatMessage | null> {
+  const [a, b] = args;
+  switch (cmd) {
+    case 'stock': {
+      if (b === 'unknown') {
+        resolvePending(a);
+        logEvent({ type: 'stock_report', needId: a, value: 'unknown' });
+        return executeActions([]);
+      }
+      return executeActions([{ type: 'updateHouseholdStock', needId: a, level: b as never }]);
+    }
+    case 'setstock': return executeActions([{ type: 'updateHouseholdStock', needId: a, qty: parseFloat(b) }]);
+    case 'never': return executeActions([{ type: 'updatePreference', needId: a, neverSuggest: true, active: false, statement: 'כרטיס למידה: להפסיק להציע' }]);
+    case 'flex': {
+      const n = updateNeed(a, { flexibility: b as Flexibility, flexConfidence: 0.95 }, `כרטיס למידה: ${b}`);
+      return { id: uid('m_'), role: 'assistant', text: `הבנתי. ${flexText(n)}`, components: [{ type: 'state_change', changes: [`${n.emoji} ${n.label}: ${FLEX_LABEL[n.flexibility]} — קבוע`] }], createdAt: nowIso() };
+    }
+    case 'noop': return { id: uid('m_'), role: 'assistant', text: 'סבבה 👍', createdAt: nowIso() };
+    case 'stockok': {
+      for (const n of store.needs().filter((x) => x.active)) {
+        const e = estimateStock(n);
+        if (e.known) setStock(n.id, e.qty, Math.max(e.confidence, 0.7), 'אישור הערכה');
+      }
+      return { id: uid('m_'), role: 'assistant', text: 'מעולה, אישרתי את ההערכה ✓', createdAt: nowIso() };
+    }
+    case 'deal': {
+      // #deal take NEED QTY | #deal skip DEALID NEED
+      if (a === 'take') return executeActions([{ type: 'addBasketItem', needId: b, quantity: parseFloat(args[2] ?? '1') }]);
+      if (a === 'skip') { svc.dismissDeal(b, args[2]); return { id: uid('m_'), role: 'assistant', text: 'הבנתי, פחות כאלה 👍', createdAt: nowIso() }; }
+      return null;
+    }
+  }
+  return null;
+}
+
+const pick = <T,>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)];
