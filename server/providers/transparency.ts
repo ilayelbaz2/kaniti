@@ -105,7 +105,8 @@ export function parseStores(xml: string): StoreInfo[] {
 // ---------- file access ----------
 
 async function shufersalLinks(catId: number, storeId: string): Promise<string[]> {
-  const res = await httpFetch(`https://prices.shufersal.co.il/FileObject/UpdateCategory?catID=${catId}&storeId=${storeId}`, {}, 20000);
+  const url = `https://prices.shufersal.co.il/FileObject/UpdateCategory?catID=${catId}&storeId=${storeId}`;
+  const res = await httpFetch(url, {}, 40000).catch(() => httpFetch(url, {}, 40000));
   const html = await res.text();
   return [...html.matchAll(/href="(https:\/\/pricesprodpublic[^"]+)"/g)].map((m) => m[1].replace(/&amp;/g, '&'));
 }
@@ -152,8 +153,22 @@ class Cerberus {
   }
 }
 
+/** Store id from a feed file name. Two shapes exist:
+ *  PriceFull<chain>-<store>-<yyyymmddhhmm>.gz  and  PriceFull<chain>-<subchain>-<store>-<yyyymmdd>-<hhmmss>.gz */
+export function storeOfFile(name: string): string | null {
+  const parts = name.replace(/\.(gz|xml|zip)$/gi, '').split('-');
+  if (parts.length >= 5) return String(parseInt(parts[2]));
+  if (parts.length >= 3) return String(parseInt(parts[1]));
+  return null;
+}
+const kindOf = (name: string) => name.match(/^[a-z]+/i)?.[0].toLowerCase() ?? '';
+
 const latest = (names: string[], re: RegExp) => names.filter((n) => re.test(n)).sort((a, b) => stamp(b) - stamp(a))[0];
-const stamp = (n: string) => parseInt(n.match(/(\d{12})(?:\d{2})?(?:\.\w+)*$/)?.[1] ?? n.match(/-(\d{8,14})/)?.[1] ?? '0');
+const stamp = (n: string) => {
+  const p = n.replace(/\.(gz|xml|zip)$/gi, '').split('-');
+  const tail = p.length >= 5 ? p[p.length - 2] + p[p.length - 1] : p[p.length - 1];
+  return parseInt(tail.replace(/\D/g, '').padEnd(14, '0').slice(0, 14) || '0');
+};
 
 async function downloadBest(links: string[]): Promise<Buffer> {
   const sorted = [...links].sort((a, b) => stamp(fileOf(b)) - stamp(fileOf(a)));
@@ -176,7 +191,7 @@ export async function listStores(chain: PhysicalChain): Promise<StoreInfo[]> {
     const name = latest(files, /^stores/i);
     if (!name) throw new Error('אין קובץ סניפים');
     xml = decodeXml(await c.download(name));
-    publishing = new Set(files.map((f) => f.match(/^pricefull\d+-0*(\d+)-/i)?.[1]).filter((x): x is string => !!x));
+    publishing = new Set(files.filter((f) => kindOf(f) === 'pricefull').map(storeOfFile).filter((x): x is string => !!x));
   }
   let stores = parseStores(xml);
   if (publishing?.size) stores = stores.filter((st) => publishing!.has(String(parseInt(st.storeId))));
@@ -202,11 +217,11 @@ export async function loadBranch(chain: PhysicalChain, storeId: string): Promise
     await c.login();
     const files = await c.list();
     const sid = String(parseInt(storeId));
-    const reStore = (kind: string) => new RegExp(`^${kind}\\d+-0*${sid}-`, 'i');
-    const pf = latest(files, reStore('pricefull'));
+    const of = (kind: string) => files.filter((f) => kindOf(f) === kind && storeOfFile(f) === sid);
+    const pf = latest(of('pricefull'), /./);
     if (!pf) throw new Error(`אין קובץ PriceFull לסניף ${storeId}`);
     priceXml = decodeXml(await c.download(pf));
-    const pr = latest(files, reStore('promofull'));
+    const pr = latest(of('promofull'), /./);
     used.push(pf, pr ?? '(no PromoFull)');
     if (pr) promoXml = decodeXml(await c.download(pr));
   }

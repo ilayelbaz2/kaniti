@@ -53,3 +53,10 @@ test('store city codes and names', async () => {
   assert.ok(!storeInCity({ city: '3000', name: 'תלפיות' }, 'רמת גן'));
   assert.ok(storeInCity({ city: '5000', name: 'רמת החייל' }, 'תל אביב-יפו'));
 });
+
+test('feed file names: both shapes', async () => {
+  const { storeOfFile } = await import('../server/providers/transparency.ts');
+  assert.equal(storeOfFile('PriceFull7290058140886-001-001-20261006-001006.gz'), '1');
+  assert.equal(storeOfFile('PriceFull7290058140886-001-055-20261006-001006.gz'), '55');
+  assert.equal(storeOfFile('PriceFull7290785400000-104-202610060630.gz'), '104');
+});

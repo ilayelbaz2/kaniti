@@ -32,3 +32,15 @@ await raw('https://www.victoryonline.co.il/v2/retailers/1470/branches?appId=4&la
 
 await raw(`${host}/v2/retailers/1062/branches/${ids[1] ?? 924}/categories?appId=4&languageId=1`, { headers: { Accept: 'application/json' } });
 await raw(`${host}/v2/retailers/1062/products?appId=2&languageId=1&from=0&size=2&query=${encodeURIComponent('חלב')}`, { headers: { Accept: 'application/json' } });
+
+p('=== Tiv Taam product shape');
+{
+  const t = await raw(`${host}/v2/retailers/1062/branches/939/products?appId=4&languageId=1&isSearch=true&from=0&size=2&query=${encodeURIComponent('חלב')}&filters=${filters}`, { headers: { Accept: 'application/json' } });
+  try {
+    const j = JSON.parse(t);
+    const pr = j.products?.[0] ?? {};
+    p('  keys:', Object.keys(pr).join(','));
+    p('  name fields:', JSON.stringify({ localName: pr.localName, names: pr.names, id: pr.id, productId: pr.productId }).slice(0, 400));
+    p('  branch:', JSON.stringify(pr.branch ?? pr.branches ?? null).slice(0, 600));
+  } catch (e) { p('  parse fail', (e as Error).message); }
+}
