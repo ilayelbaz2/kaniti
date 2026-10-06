@@ -10,7 +10,8 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "live-check": "tsx scripts/live-check.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

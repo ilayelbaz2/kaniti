@@ -1,0 +1,24 @@
+# Manually (or on provider changes) verifies the supermarket connectors against the real sites.
+name: live-check
+on:
+  workflow_dispatch:
+    inputs:
+      city:
+        description: City to check delivery / branches for
+        default: רמת גן
+  push:
+    paths: ['server/providers/**', 'scripts/live-check.ts', '.github/workflows/live-check.yml']
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm test
+      - run: npx tsx scripts/live-check.ts "${{ github.event.inputs.city || 'רמת גן' }}"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: live-check, path: data/live-check.md, if-no-files-found: ignore }
