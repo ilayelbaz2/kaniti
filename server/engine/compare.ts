@@ -72,7 +72,12 @@ export async function compareBasket(basket: Basket): Promise<Comparison> {
     const next = online[1];
     const gap = next ? Math.round(adj(next) - adj(bo)) : 0;
     let text = `הייתי מזמין מ${bo.providerName}.`;
-    if (next) text += bo.completeness > next.completeness + 0.01 ? ` היא מלאה יותר וזולה ב־₪${Math.max(0, gap)} מהאפשרות הבאה.` : ` זולה ב־₪${gap} מ${next.providerName}.`;
+    if (next) {
+      const rawGap = Math.round(next.total - bo.total);
+      text += bo.completeness > next.completeness + 0.01
+        ? (rawGap >= 0 ? ` היא מלאה יותר (${pct(bo)} מול ${pct(next)}) וזולה ב־₪${rawGap} מ${next.providerName}.` : ` ב${next.providerName} הסכום נמוך יותר, אבל חסרים שם עוד פריטים — כשמשלימים אותם, ${bo.providerName} יוצאת זולה ב־₪${Math.max(0, gap)}.`)
+        : ` זולה ב־₪${gap} מ${next.providerName}.`;
+    }
     if (bo.completeness < 0.999) text += ` חסרים בה ${bo.unavailableCount} פריטים.`;
     recommendation = { text, winnerId: bo.providerId, kind: 'online' };
     if (bp) {
@@ -92,6 +97,8 @@ export async function compareBasket(basket: Basket): Promise<Comparison> {
   store.saveComparison(comparison);
   return comparison;
 }
+
+const pct = (q: BasketQuote) => `${Math.round(q.completeness * 100)}%`;
 
 function medianLine(quotes: BasketQuote[], needId: string): number {
   const v = quotes.flatMap((q) => q.lines.filter((l) => l.needId === needId && !l.missing).map((l) => l.lineTotal)).sort((a, b) => a - b);

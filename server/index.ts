@@ -25,7 +25,7 @@ const wrap = (fn: (req: express.Request, res: express.Response) => Promise<unkno
   async (req: express.Request, res: express.Response) => {
     try {
       const out = await fn(req, res);
-      if (!res.headersSent) res.json(out ?? { ok: true });
+      if (!res.headersSent) res.json(out === undefined ? { ok: true } : out);
     } catch (e) {
       console.error(e);
       res.status(500).json({ error: (e as Error).message });

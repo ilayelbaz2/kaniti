@@ -201,7 +201,7 @@ export function setBudget(cap: number | null): Basket {
 
 // ---------- deals / prices ----------
 
-export async function getDeals(): Promise<{ deals: Deal[]; failures: PriceBook['failures']; demo: boolean }> {
+export async function getDeals(): Promise<{ deals: Deal[]; failures: PriceBook['failures']; demo: boolean; providers: Record<string, string> }> {
   let book = lastBook();
   let failures = book.failures;
   if (!book.byNeed.size) {
@@ -213,7 +213,8 @@ export async function getDeals(): Promise<{ deals: Deal[]; failures: PriceBook['
   const dismissed = new Set(kvGet<string[]>('dismissedDealIds') ?? []);
   const deals = householdDeals(book).filter((d) => !dismissed.has(d.id));
   const all = [...book.byNeed.values()].flat();
-  return { deals, failures, demo: all.some((r) => r.source === 'demo') };
+  const names = Object.fromEntries(householdProviders(store.household(), { physical: true }).map((p) => [p.id, p.name]));
+  return { deals, failures, demo: all.some((r) => r.source === 'demo'), providers: names };
 }
 
 export function dismissDeal(dealId: string, needId: string) {
