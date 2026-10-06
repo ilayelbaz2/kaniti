@@ -45,13 +45,14 @@ for (const chain of PHYSICAL_CHAINS) {
   const tuna = searchBranch(br.v.items, 'טונה בשמן')[0];
   const promos = br.v.items.filter((i) => i.promoPrice).length;
   log(`- ${chain.name}: ${s.v.length} stores (${local.length} in ${city}); branch "${pick.name}" → ${br.v.items.length} items, ${promos} with promos (${br.v.promoCount} promo codes parsed; files ${br.v.files?.join(', ')}) (${br.ms}ms). e.g. ${tuna ? `${tuna.name} ₪${tuna.price}${tuna.promoPrice ? ` → ₪${tuna.promoPrice}` : ''}` : '—'}`);
-  if (physical.length < 2) physical.push({ chainId: chain.id, storeId: pick.storeId, name: pick.name });
+  if (physical.length < 3 && local.length) physical.push({ chainId: chain.id, storeId: pick.storeId, name: pick.name });
 }
 
 log('', '## Real basket comparison');
-if (!working.length) {
-  log('❌ No online provider returned data — cannot compare.');
+if (!working.length && !physical.length) {
+  log('❌ No provider returned data — cannot compare.');
 } else {
+  if (!working.length) log('⚠️ No online provider answered from here — comparing physical branches only (branch price files).');
   completeOnboarding({
     adults: 2, children: [{ age: 6 }], kosher: true, dairyAllergy: false, vegetarian: false, address: { city },
     onlineProviders: working, physicalStores: physical, flex: { COLA_ZERO: 'strict', LAUNDRY_SOFTENER: 'deal', CREAM_CHEESE: 'any' },
@@ -71,4 +72,4 @@ if (!working.length) {
 fs.mkdirSync('data', { recursive: true });
 fs.writeFileSync('data/live-check.md', out.join('\n'));
 if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join('\n'));
-process.exit(working.length >= 1 ? 0 : 1);
+process.exit(working.length >= 1 || physical.length >= 1 ? 0 : 1);

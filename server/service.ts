@@ -14,12 +14,20 @@ export type ScanResult = { book: PriceBook; failures: PriceBook['failures'] };
 export async function scanForBasket(extraNeedIds: string[] = []): Promise<ScanResult> {
   const h = store.household();
   const providers = householdProviders(h);
-  if (!providers.length) return { book: emptyPriceBook(), failures: [] };
+  if (!providers.length && !h?.physicalStores.length) return { book: emptyPriceBook(), failures: [] };
   const needs = store.needs();
   const active = needs.filter((n) => n.active && !n.neverSuggest).map((n) => n.id);
   const discovery = rotatingDiscoveryCandidates();
   const ids = [...new Set([...active, ...extraNeedIds, ...discovery])];
-  const full = await scanPrices(ids, providers);
+  let full = await scanPrices(ids, providers);
+  // Every online chain failed → fall back to branch price files so the basket still has (labelled) prices.
+  if (!full.byNeed.size) {
+    const physical = householdProviders(h, { physical: true }).filter((p) => p.kind === 'physical');
+    if (physical.length) {
+      const fb = await scanPrices(ids, physical);
+      full = { ...fb, failures: [...full.failures, ...fb.failures] };
+    }
+  }
   return { book: referenceBook(full, h), failures: full.failures };
 }
 
@@ -52,6 +60,7 @@ function sourceNote(book: PriceBook) {
   const all = [...book.byNeed.values()].flat();
   if (all.some((r) => r.source === 'demo')) return 'מחירי דמו — לא מחירים אמיתיים';
   if (all.every((r) => r.source === 'live')) return 'מחירים חיים מאתרי הרשתות';
+  if (all.every((r) => r.source === 'branch_data')) return 'אתרי האונליין לא ענו — המחירים מקבצי השקיפות של הסניפים';
   return 'חלק מהמחירים משוערים';
 }
 
