@@ -69,15 +69,28 @@ Endpoints and file formats were taken from maintained open-source projects (Open
 scrapers/parsers, SuperMarketScraping docs) rather than reverse-engineered from scratch. Parsers are tested
 against real published files in `tests/fixtures/`.
 
+### What was verified against real data (Oct 2026, from a GitHub Actions runner)
+
+- **Physical branches — working end to end.** Today's official files for Shufersal, Rami Levy, Osher Ad,
+  Yochananof, Tiv Taam and Keshet were downloaded and parsed (5–14k items per branch, thousands of promotions).
+  Stores are matched to your city (the files use CBS locality codes, e.g. רמת גן = 8600). A real 16-item basket
+  was priced and compared across three Ramat Gan branches.
+- **Online catalogs.** The ZuZ adapter returned live prices from Tiv Taam's online store. Shufersal, Rami Levy and
+  the other ZuZ chains block datacenter IPs (Cloudflare / maintenance page), so they could **not** be verified from
+  the cloud — they are expected to work from a home connection in Israel. Run `npm run live-check -- "<your city>"`
+  at home to confirm; the table shows exactly which chains answered.
+- If every online chain fails, the basket is still priced from branch files and labelled as such.
+
 ### Honest limitations
 
 - **Delivery eligibility**: there's no public address-level API for most chains. Rami Levy and the ZuZ chains are
-  checked live against their branch lists by city; Shufersal Online is assumed to deliver (it covers most of the
+  checked against their branch lists by city; Shufersal Online is assumed to deliver (it covers most of the
   country) and says so. The onboarding lets you correct the list.
 - **Delivery fees / minimum order** come from each chain's published price list, not from a real cart (carts need a
   logged-in account). The Compare screen says this.
 - **"Live"** means the price came from the chain's online catalog at that moment — it is not a checkout.
-- The online sites may block non-Israeli or datacenter IPs; run the app from home.
+- **Product matching** is rule-based (name fit, pack-size hints, look-alike exclusions). Branch files use terse,
+  abbreviated names, so an occasional odd pick is possible — replace it once in the basket and the app remembers.
 - Yochananof online (Magento GraphQL), Hazi Hinam and Osher Ad online are not implemented. Osher Ad and
   Yochananof are covered as physical branches.
 
