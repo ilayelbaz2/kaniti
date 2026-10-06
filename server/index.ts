@@ -16,7 +16,7 @@ import { explainItem } from './engine/basket.ts';
 import { DEMO, onlineCatalog } from './providers/index.ts';
 import { PHYSICAL_CHAINS, listStores } from './providers/transparency.ts';
 import { withTimeout } from './providers/types.ts';
-import { sameCity } from './providers/cities.ts';
+import { storeInCity } from './providers/cities.ts';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -70,7 +70,7 @@ app.get('/api/stores/:chainId', wrap(async (req) => {
   const city = String(req.query.city ?? '');
   if (DEMO) return [{ storeId: '1', name: `סניף ${city || 'מרכזי'} (דמו)`, city }];
   const all = await withTimeout(listStores(chain), 60000, chain.name);
-  const local = city ? all.filter((s) => sameCity(s.city, city)) : all;
+  const local = city ? all.filter((s) => storeInCity(s, city)) : all;
   return (local.length ? local : all).slice(0, 40);
 }));
 

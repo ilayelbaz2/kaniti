@@ -8,7 +8,7 @@ import fs from 'node:fs';
 const city = process.argv[2] ?? 'רמת גן';
 const { onlineCatalog } = await import('../server/providers/index.ts');
 const { PHYSICAL_CHAINS, listStores, loadBranch, searchBranch } = await import('../server/providers/transparency.ts');
-const { sameCity } = await import('../server/providers/cities.ts');
+const { storeInCity } = await import('../server/providers/cities.ts');
 const { completeOnboarding } = await import('../server/state.ts');
 const svc = await import('../server/service.ts');
 const { compareBasket } = await import('../server/engine/compare.ts');
@@ -37,14 +37,14 @@ const physical: { chainId: string; storeId: string; name: string }[] = [];
 for (const chain of PHYSICAL_CHAINS) {
   const s = await timed(() => listStores(chain));
   if (!s.ok) { log(`- ${chain.name}: ❌ stores: ${s.e}`); continue; }
-  const local = s.v.filter((x) => sameCity(x.city, city));
+  const local = s.v.filter((x) => storeInCity(x, city));
   const pick = local[0] ?? s.v[0];
   if (!pick) { log(`- ${chain.name}: stores file empty`); continue; }
   const br = await timed(() => loadBranch(chain, pick.storeId));
   if (!br.ok) { log(`- ${chain.name}: ${s.v.length} stores (${local.length} in ${city}); ❌ prices for ${pick.name}: ${br.e}`); continue; }
   const tuna = searchBranch(br.v.items, 'טונה בשמן')[0];
   const promos = br.v.items.filter((i) => i.promoPrice).length;
-  log(`- ${chain.name}: ${s.v.length} stores (${local.length} in ${city}); branch "${pick.name}" → ${br.v.items.length} items, ${promos} with promos (${br.ms}ms). e.g. ${tuna ? `${tuna.name} ₪${tuna.price}${tuna.promoPrice ? ` → ₪${tuna.promoPrice}` : ''}` : '—'}`);
+  log(`- ${chain.name}: ${s.v.length} stores (${local.length} in ${city}); branch "${pick.name}" → ${br.v.items.length} items, ${promos} with promos (${br.v.promoCount} promo codes parsed; files ${br.v.files?.join(', ')}) (${br.ms}ms). e.g. ${tuna ? `${tuna.name} ₪${tuna.price}${tuna.promoPrice ? ` → ₪${tuna.promoPrice}` : ''}` : '—'}`);
   if (physical.length < 2) physical.push({ chainId: chain.id, storeId: pick.storeId, name: pick.name });
 }
 

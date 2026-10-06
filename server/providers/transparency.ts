@@ -75,14 +75,15 @@ export function parsePromoFull(xml: string): Map<string, { price: number; minQty
     const clubs = o.clubs as Obj | undefined;
     const club = str(o.clubid ?? (clubs && typeof clubs === 'object' ? lc(clubs).clubid : ''));
     if (club && !/^0\b|כלל/.test(club)) continue; // members-only promotions are not for everyone
-    const end = str(o.promotionenddate);
+    const end = str(o.promotionenddate || o.promotionenddatetime).slice(0, 10);
     if (end && end < today()) continue;
-    const minQty = Math.max(1, fl(o.minqty));
-    const total = fl(o.discountedprice);
-    const perUnit = fl(o.discountedpricepermida) || (total && minQty ? total / minQty : 0);
-    if (!(perUnit > 0)) continue;
     const text = str(o.promotiondescription);
+    // Cerberus puts the price on the promotion; Shufersal on each PromotionItem (inside Groups).
     for (const it of walk(o.promotionitems ?? o.groups, ['itemcode'])) {
+      const minQty = Math.max(1, fl(it.minqty ?? o.minqty));
+      const total = fl(it.discountedprice ?? o.discountedprice);
+      const perUnit = fl(it.discountedpricepermida ?? o.discountedpricepermida) || (total && minQty ? total / minQty : 0);
+      if (!(perUnit > 0)) continue;
       const code = str(it.itemcode);
       const prev = map.get(code);
       if (!prev || perUnit < prev.price) map.set(code, { price: Math.round(perUnit * 100) / 100, minQty, text });
@@ -166,27 +167,36 @@ export async function listStores(chain: PhysicalChain): Promise<StoreInfo[]> {
   const cacheFile = path.join(CACHE_DIR, `${chain.id}-stores.json`);
   if (fs.existsSync(cacheFile) && Date.now() - fs.statSync(cacheFile).mtimeMs < 7 * 86400000) return JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
   let xml: string;
+  let publishing: Set<string> | undefined;
   if (chain.kind === 'shufersal') xml = decodeXml(await downloadBest(await shufersalLinks(5, '0')));
   else {
     const c = new Cerberus(chain.user!, chain.password);
     await c.login();
-    const name = latest(await c.list(), /^stores/i);
+    const files = await c.list();
+    const name = latest(files, /^stores/i);
     if (!name) throw new Error('אין קובץ סניפים');
     xml = decodeXml(await c.download(name));
+    publishing = new Set(files.map((f) => f.match(/^pricefull\d+-0*(\d+)-/i)?.[1]).filter((x): x is string => !!x));
   }
-  const stores = parseStores(xml);
+  let stores = parseStores(xml);
+  if (publishing?.size) stores = stores.filter((st) => publishing!.has(String(parseInt(st.storeId))));
   fs.mkdirSync(CACHE_DIR, { recursive: true });
   fs.writeFileSync(cacheFile, JSON.stringify(stores));
   return stores;
 }
 
-export async function loadBranch(chain: PhysicalChain, storeId: string): Promise<{ items: BranchItem[]; fileDate: string }> {
+export type BranchData = { items: BranchItem[]; fileDate: string; files?: string[]; promoCount?: number };
+
+export async function loadBranch(chain: PhysicalChain, storeId: string): Promise<BranchData> {
   const cacheFile = path.join(CACHE_DIR, `${chain.id}-${storeId}-${today()}.json`);
   if (fs.existsSync(cacheFile)) return JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
   let priceXml: string, promoXml = '';
+  const used: string[] = [];
   if (chain.kind === 'shufersal') {
-    priceXml = decodeXml(await downloadBest(await shufersalLinks(2, storeId)));
-    promoXml = await shufersalLinks(4, storeId).then(downloadBest).then(decodeXml).catch(() => '');
+    const pl = await shufersalLinks(2, storeId);
+    used.push(fileOf(pl[0] ?? ''));
+    priceXml = decodeXml(await downloadBest(pl));
+    promoXml = await shufersalLinks(4, storeId).then((l) => { used.push(fileOf(l[0] ?? '')); return downloadBest(l); }).then(decodeXml).catch(() => '');
   } else {
     const c = new Cerberus(chain.user!, chain.password);
     await c.login();
@@ -197,7 +207,8 @@ export async function loadBranch(chain: PhysicalChain, storeId: string): Promise
     if (!pf) throw new Error(`אין קובץ PriceFull לסניף ${storeId}`);
     priceXml = decodeXml(await c.download(pf));
     const pr = latest(files, reStore('promofull'));
-    if (pr) promoXml = decodeXml(await c.download(pr)).toString();
+    used.push(pf, pr ?? '(no PromoFull)');
+    if (pr) promoXml = decodeXml(await c.download(pr));
   }
   const items = parsePriceFull(priceXml);
   const promos = promoXml ? parsePromoFull(promoXml) : new Map();
@@ -205,7 +216,7 @@ export async function loadBranch(chain: PhysicalChain, storeId: string): Promise
     const p = promos.get(it.code);
     if (p && p.price < it.price) { it.promoPrice = p.price; it.promoText = p.text; it.promoMinQty = p.minQty; }
   }
-  const data = { items, fileDate: nowIso() };
+  const data: BranchData = { items, fileDate: nowIso(), files: used, promoCount: promos.size };
   fs.mkdirSync(CACHE_DIR, { recursive: true });
   // drop older caches for this store
   for (const f of fs.readdirSync(CACHE_DIR)) if (f.startsWith(`${chain.id}-${storeId}-`) && f !== path.basename(cacheFile)) fs.rmSync(path.join(CACHE_DIR, f));
