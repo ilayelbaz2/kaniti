@@ -7,7 +7,7 @@ on:
         description: City to check delivery / branches for
         default: רמת גן
   push:
-    paths: ['server/providers/**', 'scripts/live-check.ts', '.github/workflows/live-check.yml']
+    paths: ['server/providers/**', 'scripts/**', '.github/workflows/live-check.yml']
 jobs:
   live:
     runs-on: ubuntu-latest
@@ -18,6 +18,7 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm test
+      - run: npx tsx scripts/diagnose.ts || true
       - run: npx tsx scripts/live-check.ts "${{ github.event.inputs.city || 'רמת גן' }}"
       - if: always()
         uses: actions/upload-artifact@v4
