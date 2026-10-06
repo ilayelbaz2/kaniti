@@ -285,6 +285,7 @@ export function explainItem(needId: string, basket: Basket | null): string {
   if (it) {
     const units = it.quantity * c.packSize;
     lines.push(`ל־${horizon} ימים צריך ~${fmt(rate * horizon)} ${c.stockUnit}, אז הכנסתי ${it.quantity} × ${it.unit}${c.packSize !== 1 ? ` (${fmt(units)} ${c.stockUnit})` : ''}.`);
+    if (it.condition) lines.push(it.condition.met ? `ביקשתם רק אם המחיר טוב — ${it.condition.note}.` : `ביקשתם רק אם המחיר טוב, ולכן הוא לא נספר בסל כרגע: ${it.condition.note}.`);
     if (it.status === 'opportunity') lines.push('הוספתי מעבר לצורך כי יש מחיר טוב ומדובר במוצר שנשמר.');
     if (it.status === 'discovery') lines.push('זו רק הצעה — לא אכניס בלי אישור.');
     if (it.product) lines.push(`בחרתי ב: ${it.product.name} — ₪${it.product.price}${it.product.promoText ? ` (${it.product.promoText})` : ''}.`);

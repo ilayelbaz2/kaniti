@@ -44,7 +44,7 @@ export function BasketScreen({ ctx }: { ctx: Ctx }) {
   const subs = b.items.filter((i) => i.usualProductName);
 
   return (
-    <div className="screen">
+    <div className="screen" style={{ paddingBottom: 'calc(var(--nav-h) + 96px)' }}>
       <div className="sum-head">
         <div className="spread"><h1>הסל שלי</h1>{b.priced && <span className="big-num">~{nis(total)}</span>}</div>
         <div className="muted small" style={{ margin: '4px 0 10px' }}>{active.length} פריטים · {deals} מבצעים · {sugg} הצעות</div>
