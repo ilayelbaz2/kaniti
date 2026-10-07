@@ -267,3 +267,8 @@ details.dlv-no summary { cursor: pointer; color: var(--ink-2); font-size: 14px; 
 @media (prefers-color-scheme: dark) { .seg button.on.sometimes { color: #fcd34d; } }
 @keyframes stPop { 0% { transform: scale(0.9); } 60% { transform: scale(1.08); } 100% { transform: none; } }
 @keyframes stBounce { 0%, 100% { transform: none; } 40% { transform: translateY(-4px) scale(1.15); } }
+
+/* tap targets (phone) */
+.qty button { min-width: 40px; min-height: 40px; }
+button.link { min-height: 36px; padding: 6px 2px; }
+.chip { min-height: 36px; }

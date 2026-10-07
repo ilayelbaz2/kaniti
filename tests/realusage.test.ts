@@ -113,3 +113,12 @@ test('a purchase after a comparison records the next-best quote, promos used and
   assert.equal(ins.savings.saved, 0, 'demo purchases never produce "saved"');
   kvSet('lastDeals', null);
 });
+
+test('insights: potential saving uses the deal percentage correctly (30 = 30%) and never counts as saved', async () => {
+  const { savings } = await import('../server/insights.ts');
+  const { getConcept } = await import('../server/state.ts');
+  const d = { id: 'x', kind: 'now' as const, needId: 'TUNA', label: 'טונה', emoji: '', discountPct: 30, why: '', suggestQty: 2, unit: '', product: { providerId: 'a', productId: '1', name: 'טונה', price: 10, available: true, source: 'live' as const, fetchedAt: '' } };
+  const r = savings({ now: new Date(), purchases: [], needs: [], events: [], snapshots: [], deals: [d], delivery: [], concept: getConcept, shopEveryDays: 14 });
+  assert.equal(r.potential, 6);
+  assert.equal(r.saved, 0);
+});

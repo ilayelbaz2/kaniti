@@ -4,7 +4,7 @@ import type { Ctx } from '../App.tsx';
 import { api, type LearningEventRow } from '../api.ts';
 import { nis } from '../components/ChatParts.tsx';
 import { Insights } from './Insights.tsx';
-import { productLine } from '../../shared/product.ts';
+import { per14Text, productLine, qtyText } from '../../shared/product.ts';
 
 const FLEX: [Flexibility, string][] = [
   ['exact_product', 'רק מוצר/מותג מסוים'],
@@ -117,7 +117,6 @@ function NeedCard({ n, ctx }: { n: HouseholdNeed; ctx: Ctx }) {
   const { setState, toast } = ctx;
   const [edit, setEdit] = useState(false);
   const [brand, setBrand] = useState('');
-  const conf = n.qtySource === 'user' || (n.qtySource === 'learned' && n.flexConfidence > 0.5) ? 'גבוה' : n.qtySource === 'learned' ? 'בינוני' : 'נמוך';
   const patch = async (p: Partial<HouseholdNeed>) => setState(await api.patchNeed(n.id, p));
   const stock = n.currentStockEstimate ?? 0;
   return (
@@ -126,7 +125,7 @@ function NeedCard({ n, ctx }: { n: HouseholdNeed; ctx: Ctx }) {
         <b>{n.emoji} {n.label}</b>
         <button className="link" onClick={() => setEdit(!edit)}>{edit ? 'סגור' : 'ערוך'}</button>
       </div>
-      <div className="small muted">~{fmt(n.typical14DayQty)} לשבועיים · ביטחון: {conf}{n.stockAsOf ? ` · בבית עכשיו ~${fmt(stock)}` : ''}</div>
+      <div className="small muted">{per14Text(n.typical14DayQty, '')}{n.stockAsOf ? ` · בבית עכשיו ${qtyText(stock, '')}` : ''}{n.staple === 'always' ? ' · ⭐ אסור שייגמר' : ''}</div>
       {n.hardConstraints.length > 0 && <div className="chips">{n.hardConstraints.map((h) => <span key={h} className="chip on">🛡️ חובה: {h}</span>)}</div>}
       <div className="small">{FLEX_SHORT[n.flexibility]}{n.preferredBrands.length ? ` · ${n.preferredBrands.join(', ')}` : ''}{n.forbiddenBrands.length ? ` · בלי ${n.forbiddenBrands.join(', ')}` : ''}{n.dealSensitivity === 'high' ? ' · פתוחים למבצעים' : ''}</div>
       {n.id === 'COLA_ZERO' && n.flexConfidence < 0.5 && (

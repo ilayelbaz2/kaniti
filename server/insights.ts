@@ -513,7 +513,7 @@ export function savings(i: InsightsInput): InsightsReport['savings'] {
     }
   }
   const potential = Math.round(
-    i.deals.filter((d) => d.kind !== 'discovery').reduce((s, d) => s + (d.discountPct || 0) * (d.product?.price || 0) * (d.suggestQty || 0), 0),
+    i.deals.filter((d) => d.kind !== 'discovery' && d.kind !== 'anyway').reduce((s, d) => s + (d.savingNis ?? dealFraction(d) * (d.product?.price || 0) * (d.suggestQty || 0)), 0),
   );
 
   const saved = round2(storeSaved + promoSaved);
@@ -615,7 +615,7 @@ export function recommendNextShop(i: InsightsInput): Insight {
   const parts: string[] = [];
   let rec = base;
 
-  const relevant = i.deals.filter((d) => d.discountPct >= 0.15 && safeConcept(i, d.needId)?.shelfStable);
+  const relevant = i.deals.filter((d) => dealFraction(d) >= 0.15 && safeConcept(i, d.needId)?.shelfStable);
   const withEnd = relevant.map((d) => ({ d, end: d.product?.promoEndsAt ? localDate(d.product.promoEndsAt) : '' }));
   const catchable = withEnd.filter((x) => x.end && x.end < base && x.end >= today && x.end >= addDays(base, -3));
   const unknownEnd = withEnd.filter((x) => !x.end);
@@ -728,4 +728,10 @@ export function answer(q: InsightQuestion, r: InsightsReport, i: InsightsInput, 
       return xs.length ? join(xs.slice(0, 3)) : 'עדיין אין מספיק קניות חוזרות כדי לדעת כמה זמן דברים מחזיקים אצלכם';
     }
   }
+}
+
+/** Deal.discountPct is a whole percentage (30 = 30%); tolerate fractions too. */
+function dealFraction(d: Deal): number {
+  const v = d.discountPct || 0;
+  return v > 1 ? v / 100 : v;
 }

@@ -38,9 +38,13 @@ export function Deals({ ctx }: { ctx: Ctx }) {
 
   const inBasket = (needId: string) => state.basket?.status === 'building' ? state.basket.items.find((i) => i.needId === needId && i.accepted) : undefined;
   const take = async (d: Deal, qty: number) => {
-    const cur = inBasket(d.needId);
-    setState(await api.add(d.needId, (cur?.quantity ?? 0) + qty, { providerId: d.product.providerId, productId: d.product.productId }));
+    setState(await api.add(d.needId, qty, { providerId: d.product.providerId, productId: d.product.productId }));
     toast(`${productLine(d.product)} × ${qty} בסל ✓`);
+  };
+  /** Already in the basket: switch that line to the deal's product (same quantity) instead of piling on more. */
+  const switchTo = async (d: Deal, qty: number) => {
+    setState(await api.add(d.needId, qty, { providerId: d.product.providerId, productId: d.product.productId }));
+    toast(`החלפתי ל־${productLine(d.product)} ✓`);
   };
   const skip = async (d: Deal) => {
     await api.dismissDeal(d.id, d.needId);
@@ -80,12 +84,17 @@ export function Deals({ ctx }: { ctx: Ctx }) {
                   <div className="small muted">{d.why}</div>
                   {cur && <div className="small">✓ כבר בסל ({cur.quantity} × {cur.unit})</div>}
                   <div className="row wrap">
-                    {kind === 'stock' ? <>
-                      <button className="btn small" onClick={() => take(d, d.suggestQty)}>{cur ? `עוד ${d.suggestQty}` : `קח ${d.suggestQty}`}</button>
-                      {d.suggestQty > 1 && <button className="btn small ghost" onClick={() => take(d, 1)}>{cur ? 'עוד 1' : 'קח 1'}</button>}
+                    {cur && cur.product?.productId !== d.product.productId ? <>
+                      <button className="btn small" onClick={() => switchTo(d, cur.quantity)}>החלף בסל למוצר הזה</button>
+                      <button className="btn small ghost" onClick={() => skip(d)}>לא מעניין</button>
+                    </> : cur ? <>
+                      <span className="small muted">זה המוצר שבסל ✓</span>
+                    </> : kind === 'stock' ? <>
+                      <button className="btn small" onClick={() => take(d, d.suggestQty)}>קח {d.suggestQty}</button>
+                      {d.suggestQty > 1 && <button className="btn small ghost" onClick={() => take(d, 1)}>קח 1</button>}
                       <button className="btn small ghost" onClick={() => skip(d)}>דלג</button>
                     </> : <>
-                      <button className="btn small" onClick={() => take(d, d.suggestQty)}>{cur ? `הוסף עוד ${d.suggestQty}` : kind === 'discovery' ? 'הוסף' : `הוסף לסל (${d.suggestQty})`}</button>
+                      <button className="btn small" onClick={() => take(d, d.suggestQty)}>{kind === 'discovery' ? 'הוסף' : `הוסף לסל (${d.suggestQty})`}</button>
                       <button className="btn small ghost" onClick={() => skip(d)}>{kind === 'discovery' ? 'לא הפעם' : 'לא מעניין'}</button>
                     </>}
                     {kind !== 'discovery' && <button className="chip" onClick={async () => { await api.alwaysDeal(d.needId); toast('אראה לכם תמיד כשזה זול'); }}>🔔 תמיד תראה לי אם זול</button>}

@@ -1,9 +1,10 @@
+import { per14Text, qtyText } from '../../shared/product.ts';
 // Runs typed actions against app state and produces chat replies (text + rich components).
 // The wording here is deterministic; the LLM (if any) only chooses actions.
 import type { ChatComponent, ChatMessage, Flexibility } from '../../shared/types.ts';
 import { store, kvGet, kvSet } from '../db.ts';
 import { nowIso, uid } from '../clock.ts';
-import { ensureNeed, estimateStock, fuzzyStock, getConcept, logEvent, setStock, updateNeed } from '../state.ts';
+import { allConcepts, ensureNeed, estimateStock, fuzzyStock, getConcept, logEvent, setStock, updateNeed } from '../state.ts';
 import { checkInQuestions, explainItem, flexText, fmt } from '../engine/basket.ts';
 import { compareBasket, explainStoreChoice } from '../engine/compare.ts';
 import * as svc from '../service.ts';
@@ -70,7 +71,7 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
         else { const f = fuzzyStock(n, a.level ?? 'some'); qty = f.qty; conf = f.confidence; }
         setStock(a.needId, qty, conf, a.raw);
         if (!n.active && qty === 0) updateNeed(a.needId, { active: true });
-        out.changes.push(`${c.emoji} ${c.label}: ${a.level === 'none' || qty === 0 ? 'נגמר' : a.level === 'lots' ? `יש הרבה (~${fmt(qty)} ${c.stockUnit})` : `~${fmt(qty)} ${c.stockUnit}`}`);
+        out.changes.push(`${c.emoji} ${c.label}: ${a.level === 'none' || qty === 0 ? 'נגמר' : a.level === 'lots' ? `יש הרבה (${qtyText(qty, c.stockUnit)})` : `${qtyText(qty, c.stockUnit)}`}`);
         resolvePending(a.needId);
         stateTouched = true;
         break;
@@ -201,7 +202,16 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
             out.changes.push(`${c.emoji} ${c.label}: הוחלף ל־${r.product.name}`);
             maybeFlexCard(out, a.needId, r.replacements);
           }
-        } catch { out.lines.push(`${c.label} לא בסל כרגע.`); }
+        } catch {
+          // Not in the basket: show the options instead of a dead end.
+          const r = await svc.searchProducts(c.label);
+          const rows = [...r.results].sort((x, y) => (x.promoPrice ?? x.price) - (y.promoPrice ?? y.price)).slice(0, 5);
+          if (rows.length) {
+            out.lines.push(`${c.label} לא בסל כרגע — הנה אפשרויות:`);
+            out.components.push({ type: 'prices', title: c.label, rows: rows.map((x) => ({ provider: x.providerName, name: productLine(x), price: x.promoPrice ?? x.price, promoText: x.promoText, source: x.source })), failures: r.failures });
+            out.components.push({ type: 'quick_replies', options: [{ label: 'לבחור מוצר', send: `@open:add:${c.label}` }] });
+          } else out.lines.push(`${c.label} לא בסל כרגע, ולא מצאתי חלופות.`);
+        }
         basketHandled = true;
         break;
       }
@@ -216,7 +226,19 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
           }
           break;
         }
-        // Free text ("תחפש לי חרדל") or a category ("איזה דג זול").
+        // A category ("איזה דג זול", "איזה עוף הכי משתלם"): the cheapest of each known need in it.
+        if (a.category || a.subGroup) {
+          const ids = allConcepts().filter((c) => (a.category && c.category === a.category) || (a.subGroup && c.subGroup === a.subGroup)).map((c) => c.id).slice(0, 5);
+          const found = (await Promise.all(ids.map((id) => svc.priceLookup(id)))).filter((r) => r.rows.length);
+          if (found.length) {
+            const rows = found.map((r) => ({ ...r.rows[0], name: `${r.concept.emoji} ${r.concept.label}: ${r.rows[0].name}` })).sort((x, y) => x.price - y.price);
+            out.lines.push(`${a.category === 'fish' ? 'דגים' : a.subGroup === 'chicken' ? 'עוף' : 'המוצרים'} — הכי זול כרגע בכל סוג (המחיר לאריזה / לק״ג):`);
+            out.components.push({ type: 'prices', title: 'הכי זול לפי סוג', rows, failures: found[0].failures });
+            out.components.push({ type: 'quick_replies', options: found.slice(0, 3).map((r) => ({ label: `תוסיף ${r.concept.label}`, send: `#add ${r.concept.id}` })) });
+            break;
+          }
+        }
+        // Free text ("תחפש לי חרדל").
         const q = a.query || 'מוצר';
         const r = await svc.searchProducts(q);
         const rows = [...r.results].sort((x, y) => (x.promoPrice ?? x.price) - (y.promoPrice ?? y.price)).slice(0, 6);
@@ -311,7 +333,7 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
         const rows = store.needs().filter((n) => n.active).map((n) => {
           const c = getConcept(n.id);
           const e = estimateStock(n);
-          const text = !e.known ? 'לא יודע' : e.qty <= 0.01 ? 'נגמר' : e.qty > n.typical14DayQty * 1.2 ? `הרבה (~${fmt(e.qty)})` : `~${fmt(e.qty)} ${c.stockUnit}`;
+          const text = !e.known ? 'לא יודע' : e.qty <= 0.01 ? 'נגמר' : e.qty > n.typical14DayQty * 1.2 ? `הרבה (${qtyText(e.qty, c.stockUnit)})` : `${qtyText(e.qty, c.stockUnit)}`;
           return { needId: n.id, emoji: c.emoji, label: c.label, text, value: e.qty, unit: c.stockUnit, conf: e.confidence };
         }).sort((x, y) => x.value / (store.need(x.needId)!.typical14DayQty || 1) - y.value / (store.need(y.needId)!.typical14DayQty || 1));
         out.lines.push('אני מעריך שנשאר:');
@@ -364,7 +386,7 @@ async function build(out: Out, horizon: number, quiet = false) {
     for (const n of basket.notes.filter((x) => x.includes('תקרה'))) out.lines.push(n);
     return;
   }
-  out.lines.push(s.items ? 'הסל מוכן 🎯' : 'נראה שיש לכם הכול בבית כרגע 🙂');
+  out.lines.push(s.items ? `בניתי סל ל־${horizon} ימים 👇` : 'נראה שיש לכם הכול בבית כרגע 🙂');
   if (failures.length) out.lines.push(failures.map((f) => `${f.name} לא החזירה מחיר כרגע.`).join(' ') + ' המשכתי עם שאר הרשתות.');
   if (!basket.priced) out.lines.push('בלי מחירים כרגע — בניתי לפי צריכה ומלאי.');
   for (const n of basket.notes.filter((x) => !x.includes('לא החזירה'))) out.lines.push(n);

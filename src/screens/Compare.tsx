@@ -74,7 +74,7 @@ function QuoteCard({ q, win, bestOnline, threshold, onCart }: { q: BasketQuote; 
       </div>
       <div className="spread">
         <span className="big-num">{q.kind === 'physical' ? '~' : ''}{nis(Math.round(q.total))}</span>
-        <span className="small muted">{q.kind === 'online' ? (q.deliveryFeeEstimated ? `כולל משלוח ~${nis(q.deliveryFee)} (הערכה)` : q.deliveryFee ? `כולל משלוח ${nis(q.deliveryFee)} (לפי האתר)` : 'משלוח חינם (לפי האתר)') : 'איסוף עצמי'}</span>
+        <span className="small muted">{q.kind === 'online' ? (q.deliveryFeeEstimated ? (q.deliveryFee ? `כולל משלוח ~${nis(q.deliveryFee)} (לפי מחירון)` : 'משלוח חינם (לפי מחירון)') : q.deliveryFee ? `כולל משלוח ${nis(q.deliveryFee)} (לפי האתר)` : 'משלוח חינם (לפי האתר)') : 'איסוף עצמי'}</span>
       </div>
       <div className="row small"><div className="bar grow"><div style={{ width: `${pct}%` }} /></div><span>{pct}% מהסל</span></div>
       <div className="row wrap small muted">

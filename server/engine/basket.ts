@@ -1,3 +1,4 @@
+import { per14Text, qtyText } from '../../shared/product.ts';
 // Deterministic basket engine: NEED / OPPORTUNITY / DISCOVERY.
 import type { Basket, BasketItem, CheckInQuestion, Deal, HouseholdNeed, ProductSearchResult, SkippedItem } from '../../shared/types.ts';
 import type { Concept } from '../catalog.ts';
@@ -92,8 +93,8 @@ export function generateBasket({ horizonDays, prices, previous, budgetCap }: Gen
       let qty = ceilPacks(deficit, c.packSize);
       let status: BasketItem['status'] = 'need';
       let reason = est.known && est.qty < rate * 2
-        ? (est.qty <= 0.01 ? 'נגמר בבית' : `נשאר ~${fmt(est.qty)} ${c.stockUnit}, ייגמר לפני הקנייה הבאה`)
-        : !est.known ? `אתם צורכים ~${fmt(n.typical14DayQty)} ${c.stockUnit} לשבועיים` : 'צפוי להיגמר עד הקנייה הבאה';
+        ? (est.qty <= 0.01 ? 'נגמר בבית' : `נשאר ${qtyText(est.qty, c.stockUnit)}, ייגמר לפני הקנייה הבאה`)
+        : !est.known ? `אתם צורכים ${per14Text(n.typical14DayQty, c.stockUnit)}` : 'צפוי להיגמר עד הקנייה הבאה';
       let source: BasketItem['source'] = 'stock_gap';
       if (strongDeal && c.shelfStable && n.wasteRisk === 'low') {
         const extra = Math.max(1, Math.round(ceilPacks(n.typical14DayQty, c.packSize) * 0.5));
@@ -110,7 +111,7 @@ export function generateBasket({ horizonDays, prices, previous, budgetCap }: Gen
       items.push(item(n, c, qty, 'opportunity', `יש עוד בבית, אבל ‎−${pct(disc)} — שווה להצטייד`, 'promotion', choice));
     } else {
       const reason = n.lastPurchasedAt && daysBetween(n.lastPurchasedAt) < 10 ? 'קניתם לאחרונה'
-        : est.known ? `לפי ההערכה נשאר מספיק (~${fmt(est.qty)} ${c.stockUnit})` : 'כנראה יש מספיק';
+        : est.known ? `לפי ההערכה נשאר מספיק (${qtyText(est.qty, c.stockUnit)})` : 'כנראה יש מספיק';
       skipped.push(sk(n, reason));
     }
   }
@@ -307,13 +308,13 @@ export function explainItem(needId: string, basket: Basket | null): string {
   const lines: string[] = [];
   const it = basket?.items.find((i) => i.needId === needId);
   const skippedIt = basket?.skipped.find((s) => s.needId === needId);
-  lines.push(`${c.emoji} ${c.label}: אתם צורכים בערך ${fmt(n.typical14DayQty)} ${c.stockUnit} לשבועיים${n.qtySource === 'learned' ? ' (למדתי מהקניות שלכם)' : n.qtySource === 'default' ? ' (הערכה ראשונית לפי גודל הבית)' : ''}.`);
+  lines.push(`${c.emoji} ${c.label}: אתם צורכים ${per14Text(n.typical14DayQty, c.stockUnit)}${n.qtySource === 'learned' ? ' (למדתי מהקניות שלכם)' : n.qtySource === 'default' ? ' (הערכה ראשונית לפי גודל הבית)' : ''}.`);
   lines.push(est.known
-    ? `לפי ההערכה נשארו ~${fmt(est.qty)} ${c.stockUnit} (ביטחון ${est.confidence > 0.6 ? 'גבוה' : est.confidence > 0.3 ? 'בינוני' : 'נמוך'}).`
+    ? `לפי ההערכה נשארו ${qtyText(est.qty, c.stockUnit)} (ביטחון ${est.confidence > 0.6 ? 'גבוה' : est.confidence > 0.3 ? 'בינוני' : 'נמוך'}).`
     : 'אין לי מידע על המלאי בבית, אז הנחתי שנשאר מעט.');
   if (it) {
     const units = it.quantity * c.packSize;
-    lines.push(`ל־${horizon} ימים צריך ~${fmt(rate * horizon)} ${c.stockUnit}, אז הכנסתי ${it.quantity} × ${it.unit}${c.packSize !== 1 ? ` (${fmt(units)} ${c.stockUnit})` : ''}.`);
+    lines.push(`ל־${horizon} ימים צריך ${qtyText(rate * horizon, c.stockUnit)}, אז הכנסתי ${it.quantity} × ${it.unit}${c.packSize !== 1 ? ` (${qtyText(units, c.stockUnit)})` : ''}.`);
     if (it.condition) lines.push(it.condition.met ? `ביקשתם רק אם המחיר טוב — ${it.condition.note}.` : `ביקשתם רק אם המחיר טוב, ולכן הוא לא נספר בסל כרגע: ${it.condition.note}.`);
     if (it.status === 'opportunity') lines.push('הוספתי מעבר לצורך כי יש מחיר טוב ומדובר במוצר שנשמר.');
     if (it.status === 'discovery') lines.push('זו רק הצעה — לא אכניס בלי אישור.');

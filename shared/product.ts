@@ -56,3 +56,18 @@ export function identityGaps(p: ProductIdentity): { ambiguous: boolean; missing:
   if (!hasSize) missing.push('size');
   return { ambiguous: !hasBrand && !hasSize, missing };
 }
+
+/** Estimated amounts without fake precision: "~2 בקבוקים", "פחות מ־1 בקבוקים" (never "~6.9 בקבוקים"). */
+export function qtyText(x: number, unit: string): string {
+  const u = unit ? ` ${unit}` : '';
+  if (x <= 0.05) return `0${u}`;
+  if (x < 1) return unit ? `פחות מ־1 (${unit})` : 'פחות מ־1';
+  return `~${Math.round(x)}${u}`;
+}
+
+/** Usage per two weeks: "~8 קופסאות לשבועיים", or "בערך פעם ב־7 שבועות" for slow items like Vanish. */
+export function per14Text(x: number, unit: string): string {
+  if (x <= 0) return 'לא בשימוש';
+  if (x < 1) return `בערך אחת ל־${Math.max(3, Math.round(2 / x))} שבועות`;
+  return `~${Math.round(x)}${unit ? ` ${unit}` : ''} לשבועיים`;
+}
