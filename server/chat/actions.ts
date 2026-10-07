@@ -22,7 +22,7 @@ export type Action =
   | { type: 'setBudget'; cap: number | null }
   | { type: 'askInsight'; q: InsightQuestion; needId?: string }
   | { type: 'clarify'; question: string; options: { label: string; send: string }[] }
-  | { type: 'showStock' }
+  | { type: 'showStock'; needId?: string }
   | { type: 'confirmPurchase' }
   | { type: 'help' };
 

@@ -330,6 +330,15 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
         break;
       }
       case 'showStock': {
+        if (a.needId) {
+          // A question ("יש לנו חלב?") — answer from the estimate, change nothing.
+          const n = store.need(a.needId), c = getConcept(a.needId);
+          const e = n ? estimateStock(n) : null;
+          if (!n || !e?.known || e.confidence < 0.2) out.lines.push(`אין לי מספיק מידע על ${c.label} בבית. אם תגידו לי ("יש 2" / "נגמר"), אעדכן.`);
+          else out.lines.push(e.qty <= 0.05 ? `לפי ההערכה שלי ${c.label} כנראה נגמר.` : `לפי ההערכה שלי נשאר ${qtyText(e.qty, c.stockUnit)} ${c.label}${e.confidence < 0.5 ? ' (הערכה גסה)' : ''}.`);
+          out.components.push({ type: 'quick_replies', options: [{ label: 'נגמר', send: `נגמר ${c.label}` }, { label: 'יש קצת', send: `יש קצת ${c.label}` }, { label: 'יש הרבה', send: `יש הרבה ${c.label}` }] });
+          break;
+        }
         const rows = store.needs().filter((n) => n.active).map((n) => {
           const c = getConcept(n.id);
           const e = estimateStock(n);

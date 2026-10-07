@@ -125,6 +125,8 @@ const PRONOUN = /(^|\s)(זה|בזה|לזה|אותו|אותה|אותם|אותן|�
 
 const TEMP = /(הפעם|השבוע|בקנייה הזאת|בקניה הזאת|בקנייה הזו|בסל הזה|בסל הזאת|רק עכשיו|לקנייה הזאת|בהזמנה הזאת|הקנייה הזאת)/;
 const PERM = /(מעכשיו|מהיום|אף פעם|לעולם|כבר לא|בכלל לא|תפסיק|להבא|מעתה|תמיד)/;
+// "אל תוסיף", "לא רוצה", "לא בא לי", "אין צורך ב", "לא את זה" — the add/want words are negated, so it's never an add.
+const NEG_WANT = /((^|\s)(אל|לא) (ת)?(וסיף|וסיפי|הוסיף|כניס|כניסי|קח|קני|קנה|שים|ביא|זמין)(\s|$)|(^|\s)(אני |אנחנו )?לא (רוצה|רוצים|בא לי|מתחשק לי|צריך|צריכים)(\s|$)|אין צורך|(^|\s)לא (את )?(זה|הזה|הזאת)$)/;
 const COND = /(^|\s)(רק )?(אם|בתנאי ש)[^]{0,25}?(מבצע|זול|משתל[םמ]|מחיר טוב|הנחה|שווה)/;
 
 const RE = {
@@ -153,7 +155,7 @@ const RE = {
   strictOnly: /(^|\s)(רק|אך ורק)(\s|$)(?!אם|(\d|שני|שתי|שלוש|ארבע))/,
   prefer: /(תמיד )?(תעדיף|מעדיפים|מעדיף|אנחנו אוהבים|אני אוהב|אני אוהבת|תקנה תמיד|הכי אוהבים)/,
   dislike: /(לא אוהב|לא אוהבת|לא אוהבים|לא טעים|לא טובה|לא טוב|מגעיל|לא מתאים לנו)/,
-  never: /((אל|לא) ת(ציע|מליץ)(\s|$)|(אל|לא) ת(ציע|מליץ|כניס|קנה)[^]*?(יותר|אף פעם|לעולם|בכלל)|תפסיק (להציע|להכניס|לקנות|לשים)|אנחנו (כבר )?לא קונים|לא קונים (את זה )?בכלל|אף פעם (אל|לא)|לעולם (אל|לא)|(מעכשיו|מהיום|להבא) (בלי|אל|לא))/,
+  never: /((אל|לא) ת(ציע|מליץ)(\s|$)|(אל|לא) ת(ציע|מליץ|כניס|קנה)[^]*?(יותר|אף פעם|לעולם|בכלל)|תפסיק (להציע|להכניס|לקנות|לשים)|אנחנו (כבר )?לא קונים|לא קונים (את זה )?בכלל|אף פעם (אל|לא)|לעולם (אל|לא)|(מעכשיו|מהיום|להבא) (בלי|אל|לא)|(^|\s)לא (לקנות|להכניס|להציע|לשים) (יותר(?! מ)|אף פעם|לעולם|בכלל))/,
   remove: /(עזוב|תעזוב|תוריד|הורד|להוריד|תוציא|הוצא|תמחק|מחק|תשאיר[^]*בחוץ|דלג על|תדלג על|לא צריך|לא צריכים|לא נצטרך|(אל|לא) (ת)?(קנה|תקנה|תכניס|נקנה|להכניס)|(^|\s)בלי |נוותר על|תוותר על|בלי ה)/,
   replace: /(תחליף|החלף|להחליף|משהו אחר|מוצר אחר|סוג אחר|מותג אחר|במקום|חלופה|תמורה|אחר במקום|תביא אחר|יש אחר|(תן|תביא|רוצה|בא לי)[^]*\sאחר(ת|ים)?(\s|$))/,
   promo: /(מבצע|במבצע|מבצעים|הנחה|הנחות|במחיר טוב|מחיר טוב|מחיר מעולה|דיל|סטוק|בכמות|להצטייד|לאגור|לעשות מלאי)/,
@@ -186,9 +188,10 @@ function unknownLabels(t: string): string[] {
 
 // ---------- clauses ----------
 
-function splitClauses(text: string): string[] {
-  const parts = normalize(text)
-    .split(/[!?\n;]+|\.(?!\d)|\s+(?=ו(?:אין|יש|נגמר|תוסיף|תוריד|אל |רק |לא |קח|תבנה|למה|איפה|כמה|תחליף|עזוב)\S*)/)
+function splitClauses(text: string): { t: string; q: boolean }[] {
+  // A "?" ends a clause but is remembered: "יש לנו חלב?" asks, it doesn't report stock.
+  const parts = normalize(text).replace(/\?+/g, '?\n')
+    .split(/[!\n;]+|\.(?!\d)|\s+(?=ו(?:אין|יש|נגמר|תוסיף|תוריד|אל |רק |לא |קח|תבנה|למה|איפה|כמה|תחליף|עזוב)\S*)/)
     .map((s) => s.replace(/^ו(?=אין|יש|נגמר|תוסיף|תוריד|אל |רק |לא |קח|תבנה|למה|איפה|כמה|תחליף|עזוב)/, '').trim())
     .filter(Boolean);
   // A comma separates clauses only when the next piece has its own verb/stock word ("יש 10 ביצים, אין טונה").
@@ -197,7 +200,7 @@ function splitClauses(text: string): string[] {
     if (out.length && !/(^|\s)(אין|יש|נגמר|תוסיף|תוריד|אל|רק|לא|קח|תבנה|למה|איפה|כמה|תחליף|עזוב|שים|תשים)(\s|$)/.test(piece)) out[out.length - 1] += `, ${piece}`;
     else out.push(piece);
   }
-  return out;
+  return out.map((c) => ({ t: c.replace(/\?+$/, '').trim(), q: /\?$/.test(c) })).filter((c) => c.t);
 }
 
 function horizonFrom(s: string): number {
@@ -217,7 +220,7 @@ export function parseMessage(text: string, ctx: ChatContext | null = null): Acti
   if (cmd) return parseCommand(cmd[1], cmd[2]);
 
   const actions: Action[] = [];
-  for (const clause of splitClauses(text)) actions.push(...parseClause(clause, ctx));
+  for (const { t, q } of splitClauses(text)) actions.push(...parseClause(t, ctx, q));
   if (!actions.length) {
     actions.push(whole.split(' ').length <= 2 && ctx?.focusNeedId
       ? { type: 'clarify', question: 'לא בטוח שהבנתי — מה לעשות?', options: focusOptions(ctx.focusNeedId) }
@@ -230,15 +233,16 @@ function focusOptions(needId: string): { label: string; send: string }[] {
   return [{ label: 'להוסיף לסל', send: `#add ${needId}` }, { label: 'לבדוק מחיר', send: `#price ${needId}` }, { label: 'להוריד מהסל', send: `#skip ${needId}` }];
 }
 
-function parseClause(t: string, ctx: ChatContext | null): Action[] {
+function parseClause(t: string, ctx: ChatContext | null, question = false): Action[] {
   const out: Action[] = [];
+  const neg = NEG_WANT.test(t);
   const mentions = findConcepts(t);
   const provider = providerFromText(t);
   const temp = TEMP.test(t), perm = PERM.test(t) && !temp, cond = COND.test(t);
   const pronoun = PRONOUN.test(t);
   const focus = ctx?.focusNeedId;
   const targets = mentions.length ? mentions.map((m) => m.concept.id) : pronoun && focus ? [focus] : [];
-  const hasAdd = ADD_VERB.test(t);
+  const hasAdd = ADD_VERB.test(t) && !neg;
 
   // 1. Questions about the household's own history come first ("כמה חסכתי עם קניתי?" is not a purchase).
   for (const [re, q] of RE.insight) if (re.test(t)) return [{ type: 'askInsight', q, needId: q === 'lasts' || q === 'fastest' ? targets[0] : undefined }];
@@ -279,7 +283,7 @@ function parseClause(t: string, ctx: ChatContext | null): Action[] {
   if (!targets.length) {
     if (RE.thisBrand.test(t) && (RE.never.test(t) || RE.dislike.test(t))) return [{ type: 'updatePreference', needId: 'FOCUS', dislikeCurrent: true, statement: t }];
     const cat = CATEGORY_WORDS.find(([re]) => re.test(t))?.[1];
-    if (cat && (RE.price.test(t) || RE.promo.test(t) || /\?$/.test(t) || /איזה/.test(t))) return [{ type: 'searchProductPrices', query: cat.query, category: cat.category, subGroup: cat.subGroup }];
+    if (cat && (RE.price.test(t) || RE.promo.test(t) || question || /איזה/.test(t))) return [{ type: 'searchProductPrices', query: cat.query, category: cat.category, subGroup: cat.subGroup }];
     const labels = unknownLabels(t);
     if (labels.length && RE.promo.test(t) && !hasAdd) return [{ type: 'searchPromotions', query: labels[0] }];
     if (labels.length && RE.price.test(t) && !hasAdd) return [{ type: 'searchProductPrices', query: labels[0] }];
@@ -292,11 +296,11 @@ function parseClause(t: string, ctx: ChatContext | null): Action[] {
     if (focus) {
       const n = findNumber(t);
       if (RE.replace.test(t)) return [{ type: 'replaceBasketItem', needId: focus }];
-      if (RE.remove.test(t)) return [{ type: 'removeBasketItem', needId: focus, temporary: !perm }];
+      if (RE.remove.test(t) || neg) return [{ type: 'removeBasketItem', needId: focus, temporary: !perm }];
       if (hasAdd && n !== undefined) return [{ type: 'addBasketItem', needId: focus, quantity: n }];
       if (hasAdd && /אז|כן|יאללה|סבבה/.test(t)) return [{ type: 'addBasketItem', needId: focus }];
     }
-    if (pronoun && (hasAdd || RE.replace.test(t) || RE.remove.test(t))) return [{ type: 'clarify', question: 'על איזה מוצר מדובר?', options: [] }];
+    if (pronoun && (hasAdd || neg || RE.replace.test(t) || RE.remove.test(t))) return [{ type: 'clarify', question: 'על איזה מוצר מדובר?', options: [] }];
     if (labels.length && !RE.stockHave.test(t)) return [{ type: 'clarify', question: `לחפש "${labels[0]}" או להוסיף לסל?`, options: [{ label: 'לחפש', send: `תחפש ${labels[0]}` }, { label: 'להוסיף לסל', send: `תוסיף ${labels[0]}` }] }];
     return out;
   }
@@ -307,7 +311,7 @@ function parseClause(t: string, ctx: ChatContext | null): Action[] {
     const n = findNumber(m ? t.slice(0, m.start) + ' ' + t.slice(m.end) : t);
     if (RE.dealAlert.test(t)) { out.push({ type: 'updatePreference', needId: id, dealSensitivity: 'high', statement: t }); continue; }
     if (cond && hasAdd && !RE.remove.test(t)) { out.push({ type: 'addBasketItem', needId: id, quantity: n, conditional: 'good_price' }); continue; }
-    if (RE.never.test(t) || (perm && RE.remove.test(t))) { out.push({ type: 'updatePreference', needId: id, neverSuggest: true, active: false, statement: t }); continue; }
+    if (!temp && (RE.never.test(t) || (perm && (RE.remove.test(t) || neg)))) { out.push({ type: 'updatePreference', needId: id, neverSuggest: true, active: false, statement: t }); continue; }
     if (RE.flex.test(t)) { out.push({ type: 'updatePreference', needId: id, flexibility: 'category_flexible', preferredBrands: [], dealSensitivity: 'high', statement: t }); continue; }
     if (RE.replace.test(t) && !RE.price.test(t.replace(/משהו אחר|מוצר אחר/, ''))) { out.push({ type: 'replaceBasketItem', needId: id }); continue; }
     if (RE.replace.test(t) && /(יש|תמצא|תביא)/.test(t)) { out.push({ type: 'replaceBasketItem', needId: id }); continue; }
@@ -315,7 +319,7 @@ function parseClause(t: string, ctx: ChatContext | null): Action[] {
     if (qTo && !RE.stockNone.test(t)) { out.push({ type: 'updateBasketQuantity', needId: id, quantity: asNum(qTo[2]) }); continue; }
     const qOnly = t.match(RE.qtyOnly);
     if (qOnly) { out.push({ type: 'updateBasketQuantity', needId: id, quantity: asNum(qOnly[2]) }); continue; }
-    if (RE.remove.test(t) && !RE.stockSome.test(t)) {
+    if ((RE.remove.test(t) || neg) && !RE.stockSome.test(t)) {
       out.push(temp ? { type: 'setTemporaryInstruction', needId: id, mode: 'skip' } : { type: 'removeBasketItem', needId: id, temporary: true });
       continue;
     }
@@ -334,6 +338,8 @@ function parseClause(t: string, ctx: ChatContext | null): Action[] {
     if (RE.less.test(t) && !RE.stockHave.test(t)) { out.push({ type: 'updateBasketQuantity', needId: id, delta: -1 }); continue; }
     if (RE.tempWant.test(t)) { out.push({ type: 'setTemporaryInstruction', needId: id, mode: 'include', quantity: n }); continue; }
     if (hasAdd) { out.push({ type: 'addBasketItem', needId: id, quantity: n }); continue; }
+    // "יש לנו חלב?" / "חלב נגמר?" — a question about stock is answered, not recorded.
+    if (question && (RE.stockSome.test(t) || RE.stockLittle.test(t) || RE.stockNone.test(t) || RE.stockHave.test(t))) { out.push({ type: 'showStock', needId: id }); continue; }
     // Stock statements (negation and hedging first).
     if (RE.stockSome.test(t)) { out.push({ type: 'updateHouseholdStock', needId: id, level: RE.lots.test(t) ? 'lots' : 'some', raw: t }); continue; }
     if (RE.stockLittle.test(t)) { out.push({ type: 'updateHouseholdStock', needId: id, level: 'little', raw: t }); continue; }
@@ -345,7 +351,7 @@ function parseClause(t: string, ctx: ChatContext | null): Action[] {
     }
     if (RE.build.test(t)) continue;
     // Bare product name: a question → price; otherwise most likely they want it.
-    if (/\?$/.test(t.trim()) || /^(ו)?(מה עם|ומה עם)/.test(t)) { out.push({ type: 'searchProductPrices', needId: id, query: m?.concept.query ?? '' }); continue; }
+    if (question || /^(ו)?(מה עם|ומה עם)/.test(t)) { out.push({ type: 'searchProductPrices', needId: id, query: m?.concept.query ?? '' }); continue; }
     if (targets.length === 1 && t.split(' ').length <= 4) { out.push({ type: 'addBasketItem', needId: id, quantity: n }); continue; }
     out.push({ type: 'clarify', question: `מה לעשות עם ${m?.concept.label ?? 'זה'}?`, options: focusOptions(id) });
   }

@@ -83,7 +83,35 @@ const CASES: [string, string, Record<string, unknown>, Partial<Ctx>?][] = [
   ['כמה זמן מרכך מחזיק אצלנו?', 'askInsight', { q: 'lasts', needId: 'LAUNDRY_SOFTENER' }],
   ['תכין לי עגלה בשופרסל', 'prepareProviderCart', { providerId: 'shufersal' }],
   ['אל תעבור 600', 'setBudget', { cap: 600 }],
+  // Negation is never an add (technical review B1).
+  ['אני לא רוצה במבה', 'removeBasketItem', { needId: 'BAMBA', temporary: true }],
+  ['אל תוסיף טונה', 'removeBasketItem', { needId: 'TUNA', temporary: true }],
+  ['לא רוצה חלב', 'removeBasketItem', { needId: 'MILK', temporary: true }],
+  ['לא את זה', 'removeBasketItem', { needId: 'TUNA', temporary: true }, { focusNeedId: 'TUNA' }],
+  ['לא לקנות יותר במבה', 'updatePreference', { needId: 'BAMBA', neverSuggest: true }],
+  ['לא בא לי סלמון השבוע', 'setTemporaryInstruction', { needId: 'SALMON', mode: 'skip' }],
+  ['אין צורך בחלב', 'removeBasketItem', { needId: 'MILK', temporary: true }],
+  ['אל תקנה יותר במבה השבוע', 'setTemporaryInstruction', { needId: 'BAMBA', mode: 'skip' }],
+  // A question about stock is answered, never recorded.
+  ['יש לנו חלב?', 'showStock', { needId: 'MILK' }],
+  ['חלב נגמר?', 'showStock', { needId: 'MILK' }],
 ];
+
+const NEVER: [string, string[]][] = [
+  ['אני לא רוצה במבה', ['addBasketItem', 'setTemporaryInstruction']],
+  ['אל תוסיף טונה', ['addBasketItem']],
+  ['לא בא לי סלמון השבוע', ['addBasketItem', 'updatePreference']],
+  ['אין צורך בחלב', ['updateHouseholdStock', 'addBasketItem']],
+  ['אל תקנה יותר במבה השבוע', ['updatePreference']],
+  ['יש לנו חלב?', ['updateHouseholdStock']],
+  ['חלב נגמר?', ['updateHouseholdStock']],
+];
+for (const [input, banned] of NEVER) {
+  test(`never misread: ${input}`, () => {
+    const acts = parseMessage(input, null);
+    for (const t of banned) assert.ok(!acts.some((x) => x.type === t), `${t} in ${JSON.stringify(acts)}`);
+  });
+}
 
 for (const [input, type, fields, ctx] of CASES) {
   test(`${input}${ctx ? ` [ctx ${ctx.focusNeedId}]` : ''}`, () => {
