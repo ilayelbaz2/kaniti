@@ -16,28 +16,37 @@ export function ConfirmSheet({ ctx, onClose }: { ctx: Ctx; onClose: () => void }
   const [total, setTotal] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const [seed, setSeed] = useState<Awaited<ReturnType<typeof api.cartSeed>>>(null);
   useEffect(() => {
-    api.comparison().then((c) => { setCmp(c); if (c?.recommendation.winnerId) setStoreId(c.recommendation.winnerId); }).catch(() => {});
+    Promise.all([api.comparison().catch(() => null), api.cartSeed().catch(() => null)]).then(([c, sd]) => {
+      setCmp(c);
+      setSeed(sd);
+      if (sd) { setStoreId(sd.providerId); if (sd.total) setTotal(String(Math.round(sd.total * 100) / 100)); }
+      else if (c?.recommendation.winnerId) setStoreId(c.recommendation.winnerId);
+    });
   }, []);
 
   const quote = cmp?.quotes.find((q) => q.providerId === storeId);
   useEffect(() => {
     if (!b) return;
+    const fromCart = seed && seed.providerId === storeId ? seed : null;
     setRows(b.items.filter((i) => i.accepted && i.condition?.met !== false).map((i) => {
+      const s = fromCart?.items.find((x) => x.needId === i.needId);
+      if (fromCart) return { needId: i.needId, label: i.label, emoji: i.emoji, quantity: s?.quantity ?? i.quantity, unit: i.unit, productName: s?.productName ?? i.product?.name, price: s?.price ?? i.product?.price, on: !!s };
       const line = quote?.lines.find((l) => l.needId === i.needId && !l.missing);
       const price = line ? line.lineTotal / line.quantity : i.product?.price;
       return { needId: i.needId, label: i.label, emoji: i.emoji, quantity: i.quantity, unit: i.unit, productName: line?.product?.name ?? i.product?.name, price, on: !line && quote ? false : true };
     }));
-  }, [b, quote]);
+  }, [b, quote, seed, storeId]);
 
   const computed = useMemo(() => Math.round(rows.filter((r) => r.on).reduce((s, r) => s + (r.price ?? 0) * r.quantity, 0) + (quote?.deliveryFee ?? 0)), [rows, quote]);
-  const storeName = storeId === 'other' ? otherStore.trim() : quote?.providerName ?? '';
+  const storeName = storeId === 'other' ? otherStore.trim() : quote?.providerName ?? (seed?.providerId === storeId ? seed.providerName : '');
 
   const save = async () => {
     setSaving(true);
     try {
       const r = await api.purchase({
-        storeName: storeName || 'לא צוין', providerId: storeId && storeId !== 'other' ? storeId : undefined,
+        storeName: storeName || seed?.providerName || 'לא צוין', viaCart: !!seed && seed.providerId === storeId, providerId: storeId && storeId !== 'other' ? storeId : undefined,
         total: total ? parseFloat(total) : computed,
         items: rows.filter((x) => x.on).map((x) => ({ needId: x.needId, quantity: x.quantity, productName: x.productName, price: x.price })),
       });
@@ -59,10 +68,12 @@ export function ConfirmSheet({ ctx, onClose }: { ctx: Ctx; onClose: () => void }
           <>
             <div className="group-title">איפה קניתם?</div>
             <div className="chips">
+              {seed && !cmp?.quotes.some((q) => q.providerId === seed.providerId) && <button className={`chip ${storeId === seed.providerId ? 'on' : ''}`} onClick={() => setStoreId(seed.providerId)}>{seed.providerName}</button>}
               {cmp?.quotes.filter((q) => q.ok).map((q) => <button key={q.providerId} className={`chip ${storeId === q.providerId ? 'on' : ''}`} onClick={() => setStoreId(q.providerId)}>{q.providerName}</button>)}
               <button className={`chip ${storeId === 'other' ? 'on' : ''}`} onClick={() => setStoreId('other')}>מקום אחר</button>
             </div>
             {storeId === 'other' && <input className="field" placeholder="שם החנות" value={otherStore} onChange={(e) => setOtherStore(e.target.value)} />}
+            {seed && seed.providerId === storeId && <div className="banner ok small">מילאתי לפי העגלה שהכנתי ב{seed.providerName}. תקנו אם שיניתם משהו באתר.</div>}
             <div className="group-title">פריטים (בטלו סימון למה שלא נקנה)</div>
             <div className="card stack">
               {rows.map((r, idx) => (

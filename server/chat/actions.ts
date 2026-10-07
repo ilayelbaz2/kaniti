@@ -5,7 +5,7 @@ export type StockLevel = 'none' | 'little' | 'some' | 'lots';
 
 export type Action =
   | { type: 'updateHouseholdStock'; needId: string; qty?: number; level?: StockLevel; raw?: string }
-  | { type: 'updatePreference'; needId: string; flexibility?: Flexibility; preferredBrands?: string[]; forbiddenBrands?: string[]; addForbiddenBrand?: string; neverSuggest?: boolean; active?: boolean; dealSensitivity?: Level; dislikeCurrent?: boolean; statement: string }
+  | { type: 'updatePreference'; needId: string | 'FOCUS'; flexibility?: Flexibility; preferredBrands?: string[]; forbiddenBrands?: string[]; addForbiddenBrand?: string; neverSuggest?: boolean; active?: boolean; dealSensitivity?: Level; dislikeCurrent?: boolean; statement: string }
   | { type: 'searchProductPrices'; needId?: string; query: string }
   | { type: 'searchPromotions'; needId?: string }
   | { type: 'addBasketItem'; needId?: string; newLabel?: string; quantity?: number; conditional?: 'good_price' }
@@ -13,15 +13,17 @@ export type Action =
   | { type: 'replaceBasketItem'; needId: string }
   | { type: 'updateBasketQuantity'; needId: string; quantity: number }
   | { type: 'generateBasket'; horizonDays: number; skipCheckin?: boolean }
-  | { type: 'quoteBasketAcrossProviders' }
-  | { type: 'explainBasketDecision'; needId?: string; about?: 'store' }
+  | { type: 'compareProviders' }
+  | { type: 'explainDecision'; needId?: string; needIds?: string[]; about?: 'store' }
+  | { type: 'setTemporaryInstruction'; needId?: string; newLabel?: string; mode: 'skip' | 'include'; quantity?: number }
+  | { type: 'prepareProviderCart'; providerId?: string }
   | { type: 'setBudget'; cap: number | null }
   | { type: 'showStock' }
   | { type: 'confirmPurchase' }
   | { type: 'help' };
 
 export const ACTION_ORDER: Action['type'][] = [
-  'updateHouseholdStock', 'updatePreference', 'setBudget', 'removeBasketItem', 'generateBasket',
+  'updateHouseholdStock', 'updatePreference', 'setBudget', 'setTemporaryInstruction', 'removeBasketItem', 'generateBasket',
   'addBasketItem', 'updateBasketQuantity', 'replaceBasketItem', 'searchProductPrices', 'searchPromotions',
-  'quoteBasketAcrossProviders', 'explainBasketDecision', 'showStock', 'confirmPurchase', 'help',
+  'compareProviders', 'prepareProviderCart', 'explainDecision', 'showStock', 'confirmPurchase', 'help',
 ];

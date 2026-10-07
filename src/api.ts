@@ -1,4 +1,4 @@
-import type { AppState, ChatMessage, Comparison, Deal, Purchase, ProductSearchResult } from '../shared/types.ts';
+import type { AppState, CartJob, ChatMessage, Comparison, Deal, Purchase, ProductSearchResult } from '../shared/types.ts';
 
 async function call<T>(path: string, body?: unknown, method?: string): Promise<T> {
   const res = await fetch('/api' + path, {
@@ -46,5 +46,9 @@ export const api = {
   purchase: (body: unknown) => call<{ purchase: Purchase; state: AppState }>('/purchase', body),
   purchases: () => call<Purchase[]>('/purchases'),
   feedback: (id: string, needId: string, value: string) => call<Purchase>(`/purchases/${id}/feedback`, { needId, value }),
+  prepareCart: (providerId?: string) => call<CartJob>('/cart/prepare', { providerId }),
+  cartJob: () => call<CartJob | null>('/cart/job'),
+  resumeCart: () => call<CartJob | null>('/cart/resume', {}),
+  cartSeed: () => call<{ providerId: string; providerName: string; total?: number; items: { needId: string; quantity: number; productName?: string; price?: number }[] } | null>('/cart/seed'),
   devAdvance: (days: number) => call<AppState>('/dev/advance', { days }),
 };

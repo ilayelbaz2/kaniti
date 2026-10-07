@@ -70,13 +70,29 @@ export async function compareBasket(basket: Basket): Promise<Comparison> {
   const h = store.household();
   const providers = householdProviders(h, { physical: true });
   const quotes = await Promise.all(providers.map((p) => quoteOne(p, basket).catch((e) => ({ ...emptyQuote(p), error: String(e) }))));
-  // Missing items are valued at what other stores charge, so a cheap-but-incomplete basket doesn't "win".
-  const adj = (q: BasketQuote) => q.total + q.lines.filter((l) => l.missing).reduce((s, l) => s + (medianLine(quotes, l.needId) || fallbackValue(basket, l.needId, l.quantity)), 0);
+  // Items with a hard constraint (e.g. the child's dairy-free desserts) must be available for a store to rank first.
+  const hardNeeds = basket.items.filter((i) => { const n = store.need(i.needId); return !!n?.hardConstraints.length || !!getConcept(i.needId).dairyFree; }).map((i) => i.needId);
+  const { ordered, recommendation } = rankQuotes(quotes, basket, h?.driveSavingsThresholdNis ?? 60, hardNeeds);
+  const comparison: Comparison = {
+    createdAt: nowIso(), basketKey: basketKey(basket), itemsCount: basket.items.filter((i) => i.accepted).length,
+    quotes: ordered, recommendation,
+  };
+  store.saveComparison(comparison);
+  return comparison;
+}
+
+/**
+ * Pure ranking: 1) hard constraints satisfied 2) completeness (missing items valued at what other stores charge,
+ * so a gap never looks like a saving) 3) final total incl. delivery. Physical branches compete via the drive threshold.
+ */
+export function rankQuotes(quotes: BasketQuote[], basket: Basket, threshold: number, hardNeeds: string[] = []) {
+  // A missing item costs what other stores charge for it, plus a premium for having to get it elsewhere.
+  const adj = (q: BasketQuote) => q.total + q.lines.filter((l) => l.missing).reduce((s, l) => s + 1.25 * (medianLine(quotes, l.needId) || fallbackValue(basket, l.needId, l.quantity)) + 10, 0);
+  const hardMissing = (q: BasketQuote) => q.lines.filter((l) => l.missing && hardNeeds.includes(l.needId)).length;
   const ok = quotes.filter((q) => q.ok);
-  const online = ok.filter((q) => q.kind === 'online').sort((a, b) => adj(a) - adj(b) || b.completeness - a.completeness);
-  const physical = ok.filter((q) => q.kind === 'physical').sort((a, b) => adj(a) - adj(b));
+  const online = ok.filter((q) => q.kind === 'online').sort((a, b) => hardMissing(a) - hardMissing(b) || adj(a) - adj(b) || b.completeness - a.completeness);
+  const physical = ok.filter((q) => q.kind === 'physical').sort((a, b) => hardMissing(a) - hardMissing(b) || adj(a) - adj(b));
   const failed = quotes.filter((q) => !q.ok);
-  const threshold = h?.driveSavingsThresholdNis ?? 60;
 
   let recommendation: Comparison['recommendation'] = { text: 'לא הצלחתי לקבל מחירים מאף רשת כרגע.', kind: 'none' };
   const bo = online[0], bp = physical[0];
@@ -86,28 +102,24 @@ export async function compareBasket(basket: Basket): Promise<Comparison> {
     let text = `הייתי מזמין מ${bo.providerName}.`;
     if (next) {
       const rawGap = Math.round(next.total - bo.total);
-      text += bo.completeness > next.completeness + 0.01
-        ? (rawGap >= 0 ? ` היא מלאה יותר (${pct(bo)} מול ${pct(next)}) וזולה ב־₪${rawGap} מ${next.providerName}.` : ` ב${next.providerName} הסכום נמוך יותר, אבל חסרים שם עוד פריטים — כשמשלימים אותם, ${bo.providerName} יוצאת זולה ב־₪${Math.max(0, gap)}.`)
-        : ` זולה ב־₪${gap} מ${next.providerName}.`;
+      text += hardMissing(next) > hardMissing(bo)
+        ? ` ב${next.providerName} חסר מוצר שחייב להיות (${next.lines.filter((l) => l.missing && hardNeeds.includes(l.needId)).map((l) => l.label).join(', ')}).`
+        : bo.completeness > next.completeness + 0.01
+          ? (rawGap >= 0 ? ` היא מלאה יותר (${pct(bo)} מול ${pct(next)}) וזולה ב־₪${rawGap} מ${next.providerName}.` : ` ב${next.providerName} הסכום נמוך יותר, אבל חסרים שם עוד פריטים — כשמשלימים אותם, ${bo.providerName} יוצאת זולה ב־₪${Math.max(0, gap)}.`)
+          : ` זולה ב־₪${gap} מ${next.providerName}.`;
     }
-    if (bo.completeness < 0.999) text += ` חסרים בה ${bo.unavailableCount} פריטים.`;
+    if (bo.completeness < 0.999) text += ` חסרים בה ${bo.lines.filter((l) => l.missing).length} פריטים.`;
     recommendation = { text, winnerId: bo.providerId, kind: 'online' };
-    if (bp) {
+    if (bp && hardMissing(bp) <= hardMissing(bo)) {
       const saving = Math.round(adj(bo) - adj(bp));
       if (saving >= threshold) recommendation = { text: `ב${bp.providerName} תחסוך בערך ₪${saving}. זה מעל רף ה־₪${threshold} שהגדרת — הפעם הנסיעה כנראה שווה את זה.`, winnerId: bp.providerId, kind: 'physical' };
-      else if (saving > 0) recommendation.text += ` הסניף זול ב־₪${saving} בלבד — הייתי נשאר עם משלוח.`;
+      else if (saving > 0) recommendation.text += ` הסניף זול ב־₪${saving} בלבד — מתחת לרף ה־₪${threshold}, הייתי נשאר עם משלוח.`;
     }
   } else if (bp) {
-    recommendation = { text: `אין כרגע מחיר אונליין. לפי נתוני הסניף, ${bp.providerName} יוצא ~₪${Math.round(bp.total)}.`, winnerId: bp.providerId, kind: 'physical' };
+    recommendation = { text: `אין כרגע מחיר אונליין. לפי קובץ המחירים של הסניף, ${bp.providerName} יוצא ~₪${Math.round(bp.total)}.`, winnerId: bp.providerId, kind: 'physical' };
   }
   if (failed.length && (bo || bp)) recommendation.text += ` (${failed.map((f) => f.providerName).join(', ')} לא החזירו מחיר — המשכתי בלעדיהם.)`;
-
-  const comparison: Comparison = {
-    createdAt: nowIso(), basketKey: basketKey(basket), itemsCount: basket.items.filter((i) => i.accepted).length,
-    quotes: [...online, ...physical, ...failed], recommendation,
-  };
-  store.saveComparison(comparison);
-  return comparison;
+  return { ordered: [...online, ...physical, ...failed], recommendation };
 }
 
 const pct = (q: BasketQuote) => `${Math.round(q.completeness * 100)}%`;

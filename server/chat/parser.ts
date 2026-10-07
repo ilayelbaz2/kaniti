@@ -82,7 +82,7 @@ const RE = {
   promo: /(יש מבצע|מבצעים|יש הנחה|מבצע על)/,
   explain: /^(למה|מדוע|איך החלטת|למה שמת|למה הכנסת|למה בחרת)/,
   store: /(רשת|חנות|סופר|סניף)/,
-  budget: /((אל|לא) (ת)?עבור|תקרה|תקציב|מקסימום|לא יותר מ)/,
+  budget: /((אל|לא) (ת)?עבור|תקרה|תקציב|מקסימום|לא יותר מ|סל עד|קנייה עד|עד \d+ ?(ש"ח|שח|שקל|₪))/,
   confirm: /(קניתי|הזמנתי|קנינו|הזמנו|סיימתי (את )?ה?קני|אשר קנייה|תאשר קנייה)/,
   neverSuggest: /(אל|לא) ת(ציע|מליץ)|תפסיק להציע|אנחנו לא קונים|לא קונים בכלל|אף פעם לא|לעולם לא|אל תקנה[^]*?(יותר|אף פעם|לעולם)/,
   dontCare: /לא אכפת לי|לא משנה לי|לא חשוב לי|לא מעניין אותי איזה|מה שזול|מה שבמבצע|מה שמשתלם|כל מותג|לא משנה איזה/,
@@ -96,11 +96,21 @@ const RE = {
   lots: /(מלא|הרבה|המון|ערימה|מספיק|די הרבה|שפע)/,
   little: /(קצת|מעט|טיפה|כמעט נגמר|כמעט כלום|פחות)/,
   add: /(תוסיף|תוסיפי|תכניס|הוסף|להוסיף|קח|תקח|תקנה|צריך גם|צריכים גם|בא לי|תשים|שים|תביא|לקנות)/,
-  conditional: /אם (יש )?(מבצע|מחיר טוב|המחיר טוב|ה?מחיר משתלם|זול|משתלם|יש מחיר טוב)/,
+  conditional: /אם (יש )?(ממש |באמת |ממש ממש )?(מבצע|מחיר טוב|המחיר טוב|ה?מחיר משתלם|זול|משתלם|יש מחיר טוב)/,
+  tempWant: /(הפעם|השבוע|בקנייה הזאת|בסל הזה)[^]*?(רוצה|רוצים|בא לי|צריך|צריכים|תכניס|תוסיף|תביא)|(רוצה|רוצים|בא לי) [^]*?(הפעם|השבוע)/,
+  tempSkipWord: /(הפעם|השבוע|בקנייה הזאת|בסל הזה)/,
+  cart: /(תכין|תמלא|תבנה|תעביר|הכן|מלא)[^]*?(עגלה|עגלת|לעגלה|את העגלה)|(עגלה|את העגלה) ב/,
+  thisBrand: /(המותג הזה|המותג הזאת|את המותג|המוצר הזה|את זה)/,
   qty: /(תשים|תעשה|שנה ל|תשנה ל|תוריד ל|תעלה ל|במקום)\s*(\d+)/,
   replace: /(תחליף|החלף|מוצר אחר|משהו אחר במקום)/,
   stockList: /(מה חסר|מה יש בבית|מה נשאר|מה כנראה חסר|מה המצב בבית)/,
 };
+
+const PROVIDER_NAMES: [RegExp, string][] = [
+  [/שופרסל/, 'shufersal'], [/רמי ?לוי/, 'ramilevy'], [/ויקטורי/, 'victory'], [/יינות ביתן|ביתן/, 'ybitan'],
+  [/קרפור|קארפור/, 'carrefour'], [/טיב טעם/, 'tivtaam'], [/קשת/, 'keshet'], [/קוויק/, 'quik'],
+];
+export const providerFromText = (t: string) => PROVIDER_NAMES.find(([re]) => re.test(t))?.[1];
 
 export function parseMessage(text: string): Action[] {
   const actions: Action[] = [];
@@ -116,15 +126,20 @@ export function parseMessage(text: string): Action[] {
     const n = findNumber(clause.replace(first ? normalize(first.concept.label) : '', ''));
 
     if (RE.confirm.test(clause)) { actions.push({ type: 'confirmPurchase' }); continue; }
+    if (RE.cart.test(clause) && !mentions.length) { actions.push({ type: 'prepareProviderCart', providerId: providerFromText(clause) }); continue; }
+    if (RE.budget.test(clause) && n && n >= 50) { actions.push({ type: 'setBudget', cap: n }); continue; }
     if (RE.rebuild.test(clause)) { actions.push({ type: 'generateBasket', horizonDays: horizonFrom(clause), skipCheckin: true }); continue; }
     if (RE.build.test(clause) && !mentions.length) { actions.push({ type: 'generateBasket', horizonDays: horizonFrom(clause) }); continue; }
-    if (RE.budget.test(clause) && n && n >= 50) { actions.push({ type: 'setBudget', cap: n }); continue; }
     if (RE.explain.test(clause)) {
-      actions.push(first ? { type: 'explainBasketDecision', needId: first.concept.id } : { type: 'explainBasketDecision', about: RE.store.test(clause) ? 'store' : undefined });
+      actions.push(first ? { type: 'explainDecision', needId: first.concept.id, needIds: mentions.map((m) => m.concept.id) } : { type: 'explainDecision', about: RE.store.test(clause) ? 'store' : undefined });
+      continue;
+    }
+    if (!first && RE.thisBrand.test(clause) && (RE.neverSuggest.test(clause) || RE.dislike.test(clause))) {
+      actions.push({ type: 'updatePreference', needId: 'FOCUS', dislikeCurrent: true, statement: clause });
       continue;
     }
     if (RE.stockList.test(clause)) { actions.push({ type: 'showStock' }); continue; }
-    if (!first && RE.compare.test(clause)) { actions.push({ type: 'quoteBasketAcrossProviders' }); continue; }
+    if (!first && RE.compare.test(clause)) { actions.push({ type: 'compareProviders' }); continue; }
     if (!first && RE.promo.test(clause)) { actions.push({ type: 'searchPromotions' }); continue; }
     if (RE.dealAlert.test(clause) && first) {
       actions.push({ type: 'updatePreference', needId: first.concept.id, dealSensitivity: 'high', statement: clause });
@@ -144,7 +159,11 @@ export function parseMessage(text: string): Action[] {
 
     for (const m of mentions) {
       const id = m.concept.id;
-      if (RE.skipTemp.test(clause) && !RE.neverSuggest.test(clause)) { actions.push({ type: 'removeBasketItem', needId: id, temporary: true }); continue; }
+      if (RE.skipTemp.test(clause) && !RE.neverSuggest.test(clause)) {
+        actions.push(RE.tempSkipWord.test(clause) ? { type: 'setTemporaryInstruction', needId: id, mode: 'skip' } : { type: 'removeBasketItem', needId: id, temporary: true });
+        continue;
+      }
+      if (RE.tempWant.test(clause) && !RE.conditional.test(clause)) { actions.push({ type: 'setTemporaryInstruction', needId: id, mode: 'include', quantity: n }); continue; }
       if (RE.add.test(clause) && RE.conditional.test(clause)) { actions.push({ type: 'addBasketItem', needId: id, quantity: n, conditional: 'good_price' }); continue; }
       if (RE.promo.test(clause)) { actions.push({ type: 'searchPromotions', needId: id }); continue; }
       if (RE.price.test(clause) && !RE.add.test(clause)) { actions.push({ type: 'searchProductPrices', needId: id, query: m.concept.query }); continue; }
@@ -194,7 +213,7 @@ function parseCommand(name: string, rest: string): Action[] {
   switch (name) {
     case 'build': return [{ type: 'generateBasket', horizonDays: a ? parseInt(a) : 14, skipCheckin: b === 'force' }];
     case 'stock': return [{ type: 'updateHouseholdStock', needId: a, level: b as StockLevel }];
-    case 'compare': return [{ type: 'quoteBasketAcrossProviders' }];
+    case 'compare': return [{ type: 'compareProviders' }];
     case 'deals': return [{ type: 'searchPromotions' }];
     case 'stocklist': return [{ type: 'showStock' }];
     case 'flex': return [{ type: 'updatePreference', needId: a, flexibility: b as never, statement: `#flex ${b}` }];

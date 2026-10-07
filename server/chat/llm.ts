@@ -61,10 +61,10 @@ function toAction(name: string, i: In, text: string): Action | { say: string } |
     case 'set_quantity': return valid && n(i.quantity) !== undefined ? { type: 'updateBasketQuantity', needId: valid, quantity: n(i.quantity)! } : null;
     case 'replace_item': return valid ? { type: 'replaceBasketItem', needId: valid } : null;
     case 'build_basket': return { type: 'generateBasket', horizonDays: Math.min(30, Math.max(3, n(i.horizon_days) ?? 14)) };
-    case 'compare_stores': return { type: 'quoteBasketAcrossProviders' };
+    case 'compare_stores': return { type: 'compareProviders' };
     case 'price_lookup': return valid ? { type: 'searchProductPrices', needId: valid, query: valid } : null;
     case 'promotions': return { type: 'searchPromotions', needId: valid };
-    case 'explain': return { type: 'explainBasketDecision', needId: valid, about: i.about_store ? 'store' : undefined };
+    case 'explain': return { type: 'explainDecision', needId: valid, about: i.about_store ? 'store' : undefined };
     case 'set_budget': return n(i.cap) ? { type: 'setBudget', cap: n(i.cap)! } : null;
     case 'show_stock': return { type: 'showStock' };
     case 'confirm_purchase': return { type: 'confirmPurchase' };

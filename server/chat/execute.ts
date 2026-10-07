@@ -25,8 +25,40 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
   let stateTouched = false;
   let basketHandled = false;
 
+  // "המותג הזה" refers to the item we were just talking about.
+  const focusIds = actions.map((a) => ('needId' in a ? a.needId : undefined)).filter((x): x is string => !!x && x !== 'FOCUS');
+  if (focusIds.length) kvSet('focusNeed', focusIds[focusIds.length - 1]);
+  for (const a of actions) if (a.type === 'updatePreference' && a.needId === 'FOCUS') {
+    const f = kvGet<string>('focusNeed');
+    if (f) a.needId = f; else { out.lines.push('על איזה מוצר מדובר? למשל: "אל תציע את המרכך הזה".'); a.needId = ''; }
+  }
+
   for (const a of actions) {
+    if (a.type === 'updatePreference' && !a.needId) continue;
     switch (a.type) {
+      case 'setTemporaryInstruction': {
+        if (a.mode === 'skip' && a.needId) {
+          const c = getConcept(a.needId);
+          svc.removeItem(a.needId, true);
+          out.changes.push(`${c.emoji} ${c.label}: לא בקנייה הזאת (רק הפעם — ההרגלים לא משתנים)`);
+        } else if (a.mode === 'include') {
+          const { item } = await svc.addItem({ needId: a.needId, newLabel: a.newLabel, quantity: a.quantity });
+          out.changes.push(`${item.emoji} ${item.label}: נכנס לקנייה הזאת (רק הפעם)${item.product ? ` · ₪${item.product.price}` : ''}`);
+        }
+        basketHandled = true;
+        break;
+      }
+      case 'prepareProviderCart': {
+        try {
+          const job = await svc.prepareProviderCart(a.providerId);
+          out.lines.push(job.status === 'unsupported' ? job.message : `מכין את העגלה ב${job.providerName}. אם צריך להתחבר — יפתח חלון של הרשת במחשב. התשלום נשאר אצלם.`);
+          out.components.push({ type: 'quick_replies', options: [{ label: 'מעקב אחרי העגלה', send: '@open:cart' }] });
+        } catch (e) {
+          out.lines.push((e as Error).message);
+          out.components.push({ type: 'quick_replies', options: [{ label: 'השווה רשתות', send: '#compare' }] });
+        }
+        break;
+      }
       case 'updateHouseholdStock': {
         const n = ensureNeed(a.needId);
         const c = getConcept(a.needId);
@@ -179,7 +211,7 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
         }
         break;
       }
-      case 'quoteBasketAcrossProviders': {
+      case 'compareProviders': {
         const b = store.basket();
         if (!b || b.status !== 'building' || !b.items.length) { out.lines.push('אין עדיין סל להשוות. לבנות אחד?'); out.components.push({ type: 'quick_replies', options: [{ label: 'בנה קנייה', send: '#build 14' }] }); break; }
         const cmp = await compareBasket(b);
@@ -187,9 +219,14 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
         out.components.push({ type: 'quick_replies', options: [{ label: 'לפירוט ההשוואה', send: '@open:compare' }, { label: 'קניתי — לאשר', send: '@open:confirm' }] });
         break;
       }
-      case 'explainBasketDecision': {
+      case 'explainDecision': {
         if (a.about === 'store') out.lines.push(explainStoreChoice());
-        else if (a.needId) out.lines.push(explainItem(a.needId, store.basket()));
+        else if (a.needId) {
+          const b = store.basket();
+          // "למה החלפת חזה עוף בפרגיות?" → explain the item that's actually in the basket.
+          const inBasket = (a.needIds ?? [a.needId]).find((id) => b?.items.some((i) => i.needId === id && i.substitutedFrom)) ?? (a.needIds ?? [a.needId]).find((id) => b?.items.some((i) => i.needId === id)) ?? a.needId;
+          out.lines.push(explainItem(inBasket, b));
+        }
         else out.lines.push('על מה להסביר? אפשר לשאול "למה שמת טונה?" או "למה בחרת ברשת הזאת?"');
         break;
       }

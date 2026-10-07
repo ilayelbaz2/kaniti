@@ -109,6 +109,12 @@ function ItemCard({ item: i, ctx }: { item: BasketItem; ctx: Ctx }) {
         </div>
       </div>
       <div className="reason">{blocked ? `⏳ ${i.condition?.note}` : i.reason}</div>
+      {i.uncertain && !i.lockedByUser && !alts && (
+        <div className="banner warn small row">
+          <span className="grow">לא בטוח שזה המוצר הנכון — לא אכניס אותו לעגלה בלי אישור.</span>
+          <button className="btn small" onClick={() => act(async () => setAlts(await api.alternatives(i.needId)))}>בחרו מוצר</button>
+        </div>
+      )}
       {why && <div className="why">{why}</div>}
       {pending ? (
         <div className="row">

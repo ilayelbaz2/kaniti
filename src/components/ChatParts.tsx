@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ChatComponent, PriceSource } from '../../shared/types.ts';
 
-export const SOURCE_LABEL: Record<PriceSource, string> = { live: 'חי', branch_data: 'נתוני סניף', estimate: 'הערכה חלקית', demo: 'דמו' };
+export const SOURCE_LABEL: Record<PriceSource, string> = { live: 'חי אונליין', branch_data: 'קובץ מחירים רשמי של הסניף', estimate: 'הערכה', demo: 'דמו' };
 export const SourceTag = ({ s }: { s: PriceSource }) => <span className={`tag ${s}`}>{SOURCE_LABEL[s]}</span>;
 export const nis = (n: number) => `₪${n % 1 === 0 ? n : n.toFixed(2).replace(/0$/, '')}`;
 

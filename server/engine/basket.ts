@@ -4,7 +4,7 @@ import type { Concept } from '../catalog.ts';
 import { round1 } from '../catalog.ts';
 import { store } from '../db.ts';
 import { daysBetween, now, nowIso, uid } from '../clock.ts';
-import { allConcepts, dealSensitivityFor, estimateStock, getConcept } from '../state.ts';
+import { allConcepts, dealSensitivityFor, estimateStock, getConcept, newNeed } from '../state.ts';
 import { brandOf, chooseProduct, effPrice, headMatch, relevant } from './match.ts';
 
 export type PriceBook = {
@@ -125,6 +125,33 @@ export function generateBasket({ horizonDays, prices, previous, budgetCap }: Gen
       if (k.condition) k.condition = evalCondition(n, choice?.product);
     }
     items.unshift(k);
+  }
+
+  // Swap within a sub-group (חזה עוף ↔ פרגיות) when the household is flexible and the sibling is on a real deal.
+  if (priced) {
+    for (const it of [...items]) {
+      if (it.lockedByUser || it.source === 'user_request' || !it.product) continue;
+      const c = getConcept(it.needId);
+      const n = store.need(it.needId);
+      if (!c.subGroup || !n || !['category_flexible', 'exploratory'].includes(n.flexibility)) continue;
+      for (const sib of allConcepts().filter((x) => x.subGroup === c.subGroup && x.id !== c.id)) {
+        if (items.some((i) => i.needId === sib.id) || tempSkips.includes(sib.id)) continue;
+        const sn = store.need(sib.id) ?? newNeed(sib, household?.adults ?? 2, household?.children.length ?? 0);
+        if (sn.neverSuggest) continue;
+        const ch = chooseProduct(sib, sn, prices.byNeed.get(sib.id) ?? []);
+        if (!ch || ch.uncertain) continue;
+        const d = discountOf(sib.id, ch.product);
+        const cheaperBy = 1 - effPrice(ch.product) / it.product.price;
+        if (d < 0.2 || cheaperBy < 0.1) continue;
+        items.splice(items.indexOf(it), 1, {
+          needId: sib.id, label: sib.label, emoji: sib.emoji, quantity: it.quantity, unit: sib.packLabel, status: 'opportunity',
+          reason: `החלפתי ${c.label} ב${sib.label} הפעם: מבצע ‎−${pct(d)}, זול ב־${pct(cheaperBy)} לק״ג`, source: 'promotion', accepted: true,
+          product: toResolved(ch.product), substitutedFrom: c.label,
+        });
+        skipped.push({ needId: c.id, label: c.label, emoji: c.emoji, reason: `הוחלף ב${sib.label} הפעם (מבצע)` });
+        break;
+      }
+    }
   }
 
   // Discovery: restrained, suggestions only.
@@ -292,6 +319,7 @@ export function explainItem(needId: string, basket: Basket | null): string {
     if (it.status === 'discovery') lines.push('זו רק הצעה — לא אכניס בלי אישור.');
     if (it.product) lines.push(`בחרתי ב: ${it.product.name} — ₪${it.product.price}${it.product.promoText ? ` (${it.product.promoText})` : ''}.`);
     if (it.usualProductName) lines.push(`זו החלפה של ${it.usualProductName}, כי אתם גמישים במותג ויצא משתלם יותר.`);
+    if (it.substitutedFrom) lines.push(`החלפתי הפעם ${it.substitutedFrom} ב${it.label}: אתם גמישים בקטגוריה, ו${it.label} במבצע ויוצא זול יותר לק״ג. אפשר להחזיר בלחיצה.`);
   } else if (skippedIt) {
     lines.push(`לא הכנסתי: ${skippedIt.reason}.`);
   }

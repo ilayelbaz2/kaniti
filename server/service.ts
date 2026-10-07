@@ -4,7 +4,7 @@ import { store, kvGet, kvSet } from './db.ts';
 import { nowIso, uid } from './clock.ts';
 import { allConcepts, customConceptFor, ensureNeed, estimateStock, getConcept, learnFromQuantity, learnFromRemoval, learnFromReplacement, logEvent, updateNeed } from './state.ts';
 import { basketTotal, discoveryDeals, emptyPriceBook, evalCondition, generateBasket, householdDeals, toResolved, type PriceBook } from './engine/basket.ts';
-import { chooseProduct, cheaper, effPrice, relevant } from './engine/match.ts';
+import { chooseProduct, cheaper, effPrice, fit, relevant } from './engine/match.ts';
 import { householdProviders, referenceBook, scanPrices } from './providers/index.ts';
 import { round1 } from './catalog.ts';
 
@@ -18,7 +18,9 @@ export async function scanForBasket(extraNeedIds: string[] = []): Promise<ScanRe
   const needs = store.needs();
   const active = needs.filter((n) => n.active && !n.neverSuggest).map((n) => n.id);
   const discovery = rotatingDiscoveryCandidates();
-  const ids = [...new Set([...active, ...extraNeedIds, ...discovery])];
+  const groups = new Set(active.map((id) => getConcept(id).subGroup).filter(Boolean));
+  const siblings = allConcepts().filter((c) => c.subGroup && groups.has(c.subGroup)).map((c) => c.id);
+  const ids = [...new Set([...active, ...extraNeedIds, ...siblings, ...discovery])];
   let full = await scanPrices(ids, providers);
   // Every online chain failed → fall back to branch price files so the basket still has (labelled) prices.
   if (!full.byNeed.size) {
@@ -177,12 +179,12 @@ export function alternatives(needId: string): ProductSearchResult[] {
   const seen = new Set<string>();
   return (book.byNeed.get(needId) ?? [])
     .filter((p) => relevant(c, { ...n, forbiddenBrands: [] }, p) && p.productId !== current?.productId)
-    .sort(cheaper)
+    .sort((a, b) => fit(c, b) - fit(c, a) || cheaper(a, b))
     .filter((p) => (seen.has(p.name) ? false : (seen.add(p.name), true)))
     .slice(0, 6);
 }
 
-export function replaceItem(needId: string, productId?: string): { basket: Basket; replacements: number; product?: ProductSearchResult } {
+export function replaceItem(needId: string, productId?: string): { basket: Basket; replacements: number; product?: ProductSearchResult; inferred?: string } {
   const basket = requireBasket();
   const it = basket.items.find((i) => i.needId === needId);
   if (!it) throw new Error('not in basket');
@@ -190,15 +192,17 @@ export function replaceItem(needId: string, productId?: string): { basket: Baske
   const next = productId ? alts.find((p) => p.productId === productId) : alts[0];
   if (!next) return { basket, replacements: 0 };
   const from = it.product?.name;
+  const restoredUsual = !!it.usualProductName && next.name === it.usualProductName;
   it.product = toResolved(next);
   it.usualProductName = undefined;
+  it.uncertain = false;
   it.lockedByUser = true;
   it.reason = `בחרתם ידנית: ${next.name}`;
   store.saveBasket(basket);
   const c = getConcept(needId);
   const brand = next.brand ?? c.brands.find((b) => next.name.includes(b));
-  const { replacements } = learnFromReplacement(needId, from, next.name, brand);
-  return { basket, replacements, product: next };
+  const { replacements, inferred } = learnFromReplacement(needId, from, next.name, brand, restoredUsual);
+  return { basket, replacements, product: next, inferred };
 }
 
 export function setBudget(cap: number | null): Basket {
@@ -257,7 +261,7 @@ export async function discoveryList(): Promise<Deal[]> {
 
 // ---------- purchase ----------
 
-export type ConfirmInput = { storeName: string; providerId?: string; total?: number; items: { needId: string; quantity: number; productName?: string; price?: number }[] };
+export type ConfirmInput = { storeName: string; providerId?: string; total?: number; viaCart?: boolean; items: { needId: string; quantity: number; productName?: string; price?: number }[] };
 
 export function confirmPurchase(input: ConfirmInput): Purchase {
   const basket = store.basket();
@@ -289,13 +293,18 @@ export function confirmPurchase(input: ConfirmInput): Purchase {
     id: uid('p_'), createdAt: nowIso(), storeName: input.storeName, providerId: input.providerId,
     total: input.total ?? round1(items.reduce((s, i) => s + (i.price ?? 0) * i.quantity, 0)),
     items, dealsUsed: items.filter((i) => i.status === 'opportunity').length,
-    substitutions: basket?.items.filter((i) => i.usualProductName).length ?? 0,
+    substitutions: basket?.items.filter((i) => i.usualProductName || i.substitutedFrom).length ?? 0,
+    removed: (basket?.items ?? []).filter((bi) => bi.accepted && !items.some((x) => x.needId === bi.needId)).map((bi) => ({ needId: bi.needId, label: bi.label })),
+    stockUps: items.filter((i) => i.status === 'opportunity').map((i) => i.label),
+    viaCart: input.viaCart || undefined,
   };
   store.savePurchase(purchase);
   logEvent({ type: 'purchase_confirmed', value: { purchaseId: purchase.id, items: items.length, total: purchase.total } });
   if (basket) { basket.status = 'purchased'; store.saveBasket(basket); }
   store.saveComparison(null);
   kvSet('lastBook', null);
+  kvSet('cartJob', null);
+  void import('./cart/prepare.ts').then((m) => m.clearJob());
   return purchase;
 }
 

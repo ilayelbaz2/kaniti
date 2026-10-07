@@ -43,7 +43,7 @@ export function Compare({ ctx }: { ctx: Ctx }) {
       <div className="faint" style={{ marginTop: -10 }}>סל נוכחי: {cmp.itemsCount} פריטים · נבדק {new Date(cmp.createdAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</div>
       {state.demoPrices && <div className="banner demo">מצב דמו — המחירים אינם אמיתיים</div>}
       <div className="reco">{cmp.recommendation.text}</div>
-      {ok.map((q) => <QuoteCard key={q.providerId} q={q} win={q.providerId === cmp.recommendation.winnerId} bestOnline={bestOnline} threshold={threshold} />)}
+      {ok.map((q) => <QuoteCard key={q.providerId} q={q} win={q.providerId === cmp.recommendation.winnerId} bestOnline={bestOnline} threshold={threshold} onCart={ctx.openCart} />)}
       {failed.map((q) => (
         <div className="card stack" key={q.providerId} style={{ opacity: 0.75 }}>
           <b>{q.providerName}</b>
@@ -51,16 +51,19 @@ export function Compare({ ctx }: { ctx: Ctx }) {
           {q.error && <div className="faint">{q.error}</div>}
         </div>
       ))}
-      <div className="faint">"חי" = מחיר מאתר הרשת עכשיו. "נתוני סניף" = קבצי שקיפות המחירים של הסניף. דמי המשלוח לפי מחירון הרשת, לא מעגלת קניות אמיתית.</div>
+      <div className="faint">"חי אונליין" = מחיר מאתר הרשת עכשיו. "קובץ מחירים רשמי" = קבצי שקיפות המחירים של הסניף (לא מחיר אונליין). דמי המשלוח לפי מחירון הרשת; הסכום הסופי נקבע בעגלה באתר הרשת.</div>
       <button className="btn block" onClick={openConfirm}>קניתי — לאשר מה נקנה ✓</button>
     </div>
   );
 }
 
-function QuoteCard({ q, win, bestOnline, threshold }: { q: BasketQuote; win: boolean; bestOnline?: BasketQuote; threshold: number }) {
+const DELIVERY_LABEL = { confirmed: '✅ משלוח מאומת', likely: '🚚 כנראה משלחים אליכם', unknown: '❔ משלוח לא אומת', unavailable: '⛔ לא משלחים אליכם' } as const;
+
+function QuoteCard({ q, win, bestOnline, threshold, onCart }: { q: BasketQuote; win: boolean; bestOnline?: BasketQuote; threshold: number; onCart: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const pct = Math.round(q.completeness * 100);
-  const missing = q.lines.filter((l) => l.missing);
+  const missing = q.lines.filter((l) => l.missing && !l.uncertain);
+  const unsure = q.lines.filter((l) => l.uncertain);
   const subs = q.lines.filter((l) => l.substituted);
   const saving = q.kind === 'physical' && bestOnline ? Math.round(bestOnline.total - q.total) : null;
   return (
@@ -75,7 +78,8 @@ function QuoteCard({ q, win, bestOnline, threshold }: { q: BasketQuote; win: boo
       </div>
       <div className="row small"><div className="bar grow"><div style={{ width: `${pct}%` }} /></div><span>{pct}% מהסל</span></div>
       <div className="row wrap small muted">
-        {missing.length > 0 && <span>חסרים {missing.length}</span>}
+        {missing.length > 0 && <span>חסרים: {missing.map((l) => l.label).join(', ')}</span>}
+        {unsure.length > 0 && <span>· לא בטוח: {unsure.map((l) => l.label).join(', ')}</span>}
         {subs.length > 0 && <span>· {subs.length} החלפות</span>}
         {q.minOrderIssue && <span>· ⚠️ {q.minOrderIssue}</span>}
       </div>
@@ -84,12 +88,18 @@ function QuoteCard({ q, win, bestOnline, threshold }: { q: BasketQuote; win: boo
           {saving > 0 ? `חיסכון ~${nis(saving)} מול האונליין. הרף שלך לנסיעה: ${nis(threshold)} → ${saving >= threshold ? 'שווה לשקול נסיעה' : 'לא שווה לנסוע'}` : 'לא זול יותר מהאונליין'}
         </div>
       )}
+      <div className="row wrap small">
+        {q.kind === 'online' && q.deliveryStatus && <span className="tag need">{DELIVERY_LABEL[q.deliveryStatus]}</span>}
+        {q.kind === 'online' && <span className={`tag ${q.cartSupported ? 'live' : 'need'}`}>{q.cartSupported ? '🛒 הכנת עגלה נתמכת' : 'הכנת עגלה לא זמינה'}</span>}
+        <span className="faint">עודכן {new Date(q.fetchedAt).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+      </div>
+      {q.kind === 'online' && q.cartSupported && <button className={`btn ${win ? '' : 'ghost'}`} onClick={() => onCart(q.providerId)}>הכן עגלה ב{q.providerName.replace(' אונליין', '').replace(' · דמו', '')} 🛒</button>}
       <button className="link" style={{ alignSelf: 'flex-start' }} onClick={() => setOpen(!open)}>{open ? 'סגור פירוט' : 'פתח פירוט'}</button>
       {open && (
         <div>
           {q.lines.map((l) => (
             <div className="price-row" key={l.needId}>
-              <span className="grow">{l.label} × {l.quantity}<div className="faint">{l.missing ? 'לא נמצא' : l.product?.name}{l.product?.promoText ? ` · ${l.product.promoText}` : ''}</div></span>
+              <span className="grow">{l.label} × {l.quantity}<div className="faint">{l.uncertain ? `לא בטוח: ${l.product?.name}` : l.missing ? 'לא נמצא' : l.product?.name}{l.product?.promoText ? ` · ${l.product.promoText}` : ''}</div></span>
               <b>{l.missing ? '—' : nis(Math.round(l.lineTotal * 10) / 10)}</b>
             </div>
           ))}
