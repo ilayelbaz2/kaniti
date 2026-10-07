@@ -1,6 +1,6 @@
 // Picks a concrete product for a need, honouring how flexible the household is about it.
 import type { HouseholdNeed, ProductSearchResult } from '../../shared/types.ts';
-import type { Concept } from '../catalog.ts';
+import { PARVE_MARKERS, type Concept } from '../catalog.ts';
 
 export const effPrice = (p: ProductSearchResult) => p.promoPrice ?? p.price;
 
@@ -71,12 +71,37 @@ export function relevant(concept: Concept, need: HouseholdNeed | null, p: Produc
   if (need?.forbiddenBrands.some((b) => has(text, b))) return false;
   const own = norm([concept.label, concept.query, ...concept.synonyms, ...(concept.mustInclude ?? [])].join(' '));
   if (words(p.name).some((x) => NOISE.some((n) => (x.startsWith(n) || x.slice(1).startsWith(n)) && !own.includes(n)))) return false;
+  if (needsParveCheck(concept, need) && !PARVE_MARKERS.some((m) => has(text, m))) return false;
   return true;
 }
 
-export type Choice = { product: ProductSearchResult; substituted: boolean; usualName?: string; note?: string } | null;
+export const DAIRY_FREE = 'ללא חלב';
+const SAFE_FOR_DAIRY_FREE = new Set(['meat', 'fish', 'produce', 'cleaning', 'paper', 'eggs']);
+/** A hard dairy-free constraint is enforced by name markers (פרווה / ללא חלב / סויה…) unless the category can't contain dairy. */
+export function needsParveCheck(concept: Concept, need: HouseholdNeed | null): boolean {
+  if (concept.dairyFree) return false; // already enforced by alsoInclude
+  if (!need?.hardConstraints.includes(DAIRY_FREE)) return false;
+  return !SAFE_FOR_DAIRY_FREE.has(concept.category) && !concept.parveByDefault;
+}
+
+/** The concept's core word appears among the first words of the product name ("ביצים L…", not "…מאפה עם ביצים"). */
+export function headMatch(concept: Concept, p: ProductSearchResult): boolean {
+  const must = (concept.mustInclude ?? []).map(norm);
+  if (!must.length) return true;
+  const w = words(p.name).slice(0, 3).map((x) => x.replace(/^[והב](?=..)/, ''));
+  return w.some((x) => must.some((m) => x.startsWith(m))) || must.some((m) => norm(p.name).startsWith(m));
+}
+
+/** uncertain = the best candidate doesn't clearly look like this need — show alternatives, never auto-buy it. */
+export type Choice = { product: ProductSearchResult; substituted: boolean; usualName?: string; note?: string; uncertain?: boolean } | null;
 
 export function chooseProduct(concept: Concept, need: HouseholdNeed, candidates: ProductSearchResult[]): Choice {
+  const c = choose(concept, need, candidates);
+  if (c && !headMatch(concept, c.product) && norm(c.product.name) !== norm(need.lastProductName ?? '')) c.uncertain = true;
+  return c;
+}
+
+function choose(concept: Concept, need: HouseholdNeed, candidates: ProductSearchResult[]): Choice {
   const all = candidates.filter((p) => relevant(concept, need, p));
   if (!all.length) return null;
   // Only the best-fitting names compete on price (so "ביצים L" beats a cheaper "ביצים לבישול" side product).

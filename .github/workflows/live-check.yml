@@ -19,6 +19,9 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npx tsx scripts/live-check.ts "${{ github.event.inputs.city || 'רמת גן' }}"
+      - run: npx tsx scripts/match-report.ts
+        continue-on-error: true
       - if: always()
         uses: actions/upload-artifact@v4
-        with: { name: live-check, path: data/live-check.md, if-no-files-found: ignore }
+        with: { name: live-check, path: 'data/*.md
+data/*.json', if-no-files-found: ignore }
