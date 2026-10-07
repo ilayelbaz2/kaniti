@@ -3,6 +3,7 @@ import type { CartJob, DeliveryStatus, ProviderDelivery } from '../../shared/typ
 import type { Ctx } from '../App.tsx';
 import { api } from '../api.ts';
 import { nis } from '../components/ChatParts.tsx';
+import { productLine } from '../../shared/product.ts';
 
 const TERMINAL = ['ready', 'partial', 'failed', 'unsupported'];
 
@@ -33,6 +34,7 @@ export function DeliveryFacts({ d, fee, feeEstimated, window: slot }: { d?: Prov
 export function CartSheet({ ctx, providerId, verifyOnly, onClose }: { ctx: Ctx; providerId?: string; verifyOnly?: boolean; onClose: () => void }) {
   const [job, setJob] = useState<CartJob | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resuming, setResuming] = useState(false);
   const started = useRef(false);
 
   useEffect(() => {
@@ -49,6 +51,7 @@ export function CartSheet({ ctx, providerId, verifyOnly, onClose }: { ctx: Ctx; 
 
   const added = job?.lines.filter((l) => l.state === 'added') ?? [];
   const notAdded = job?.lines.filter((l) => l.state === 'failed' || l.state === 'skipped') ?? [];
+  const unverified = job?.lines.filter((l) => l.state === 'unverified') ?? [];
   const total = job?.cartTotal ?? (job ? added.reduce((s, l) => s + (l.price ?? 0) * l.quantity, 0) + (job.deliveryFee ?? 0) : 0);
 
   return (
@@ -71,39 +74,36 @@ export function CartSheet({ ctx, providerId, verifyOnly, onClose }: { ctx: Ctx; 
               </>
             ) : (job.status === 'ready' || job.status === 'partial') ? (
               <>
-                <h2>{job.status === 'ready' ? 'העגלה מוכנה 🎯' : 'הכנתי את רוב העגלה'}</h2>
+                <h2>{job.status === 'ready' ? 'העגלה מוכנה 🎯' : 'לא הצלחתי להכין את כל העגלה'}</h2>
+                <div className="small muted">{job.message}</div>
                 <div className="card stack">
                   <div className="spread"><span className="muted">רשת</span><b>{job.providerName}</b></div>
                   <DeliveryFacts d={job.delivery} fee={job.deliveryFee} feeEstimated={job.deliveryFeeEstimated} window={job.deliveryWindow} />
-                  <div className="spread"><span className="muted">פריטים</span><b>{added.length}/{job.lines.length}</b></div>
-                  <div className="spread"><span className="muted">חסרים</span><b>{notAdded.length}</b></div>
-                  <div className="spread"><span className="muted">תחליפים</span><b>{job.substitutions}</b></div>
-                  <div className="spread"><span className="muted">סה״כ{job.cartTotal !== undefined ? ' (לפי העגלה באתר)' : ' (הערכה)'}</span><b className="big-num" style={{ fontSize: 22 }}>{nis(Math.round(total * 10) / 10)}</b></div>
+                  <div className="spread"><span className="muted">בעגלה באתר</span><b>{added.length}/{job.lines.length} פריטים{job.cartVerified ? ' ✓ נבדק' : ''}</b></div>
+                  {job.substitutions > 0 && <div className="spread"><span className="muted">תחליפים</span><b>{job.substitutions}</b></div>}
+                  <div className="spread"><span className="muted">סה״כ{job.cartTotal !== undefined ? ' (לפי העגלה באתר)' : ' (הערכה)'}</span><b className="big-num" style={{ fontSize: 22 }}>{job.cartTotal !== undefined ? nis(Math.round(total * 10) / 10) : `~${nis(Math.round(total))}`}</b></div>
                 </div>
                 {job.delivery?.deliveryStatus !== 'confirmed' && <div className="banner warn">משלוח לכתובת שלכם לא אומת באתר. בדקו את הכתובת והמשלוח בעגלה לפני התשלום.</div>}
-                {notAdded.length > 0 && (
-                  <div className="card stack">
-                    <b className="small">לא הוספתי:</b>
-                    {notAdded.map((l) => <div key={l.needId} className="small">• {l.label}{l.reason ? <span className="faint"> — {l.reason}</span> : null}</div>)}
-                    <div className="faint">אפשר להוסיף אותם ידנית באתר.</div>
+                <details className="card" open={notAdded.length + unverified.length > 0}>
+                  <summary className="small"><b>פירוט לפי פריט</b></summary>
+                  <div className="stack" style={{ marginTop: 8 }}>
+                    {job.lines.map((l) => (
+                      <div key={l.needId} className="small">
+                        {l.state === 'added' ? '✅' : l.state === 'unverified' ? '❔' : '❌'} {l.productName ? productLine({ name: l.productName, brand: l.brand, sizeText: l.sizeText, byWeight: l.byWeight }) : l.label} × {l.quantity}
+                        {l.reason ? <span className="faint"> — {l.reason}</span> : null}
+                      </div>
+                    ))}
+                    {notAdded.length > 0 && <div className="faint">את מה שלא נכנס אפשר להוסיף ידנית באתר.</div>}
                   </div>
-                )}
+                </details>
                 {job.preexistingItems ? <div className="banner warn">בעגלה באתר יש עוד {job.preexistingItems} פריטים שהיו שם לפני כן — הסכום כולל אותם. בדקו לפני התשלום.</div> : null}
-                {job.anonymous && <div className="banner warn">לא הייתם מחוברים — העגלה נשמרה בחלון הדפדפן שנפתח במחשב. התחברו שם כדי שתופיע גם באפליקציה.</div>}
+                {job.anonymous && <div className="banner warn">לא הייתם מחוברים: העגלה נשמרה רק בחלון Chrome שקניתי פתחה במחשב הזה — היא לא תופיע בטלפון או בדפדפן אחר. כדי לשמור אותה בחשבון, התחברו באותו חלון.</div>}
                 <div className="banner ok small">התשלום והאישור הסופי נעשים באתר של {job.providerName}. קניתי לא שומרת ולא רואה פרטי תשלום.</div>
-                {job.cartUrl && !job.demo
-                  ? <a className="btn block" href={job.cartUrl} target="_blank" rel="noreferrer" style={{ textAlign: 'center', textDecoration: 'none' }}>המשך לעגלה ולתשלום באתר {job.providerName} ↗</a>
-                  : <button className="btn block" disabled>המשך לעגלה ולתשלום באתר</button>}
+                {job.demo
+                  ? <div className="faint">במצב דמו אין עגלה אמיתית להציג.</div>
+                  : <button className="btn block" onClick={() => api.showCart().then((r) => ctx.toast(r.message)).catch((e) => ctx.toast((e as Error).message))}>הצג את העגלה בחלון שנפתח במחשב 🛒</button>}
+                {job.cartUrl && !job.demo && !job.anonymous && <a className="btn ghost block" href={job.cartUrl} target="_blank" rel="noreferrer" style={{ textAlign: 'center', textDecoration: 'none' }}>פתח את האתר של {job.providerName} (העגלה בחשבון שלכם) ↗</a>}
                 <button className="btn ghost" onClick={() => { onClose(); ctx.openConfirm(); }}>סיימתי להזמין — לאשר מה נקנה</button>
-              </>
-            ) : job.status === 'login_required' || job.status === 'verification_required' || job.status === 'address_required' ? (
-              <>
-                <h2>{job.status === 'login_required' ? `נדרשת התחברות ל${job.providerName}` : job.status === 'address_required' ? 'צריך לבחור/לאשר כתובת באתר הסופר' : 'נדרש אימות באתר'}</h2>
-                <div className="banner warn">{job.message}</div>
-                <div className="faint">{job.status === 'address_required' ? 'בוחרים את הכתובת באתר של הרשת, בחלון שנפתח במחשב. קניתי רק קוראת מה האתר מציג.' : 'החלון נפתח במחשב שמריץ את קניתי. הסיסמה וקוד ה־SMS נכנסים רק באתר של הרשת — לא בקניתי.'}</div>
-                <button className="btn block" onClick={() => api.resumeCart().then((j) => j && setJob(j))}>{job.status === 'login_required' ? 'התחברתי — המשך' : job.status === 'address_required' ? 'בחרתי כתובת — המשך' : 'סיימתי את האימות — המשך'}</button>
-                {job.userAction === 'login_optional' && <button className="btn ghost" onClick={() => api.resumeCart(true).then((j) => j && setJob(j))}>המשך בלי להתחבר (העגלה תישאר רק בחלון במחשב)</button>}
-                {job.status === 'address_required' && <button className="btn ghost" onClick={() => api.resumeCart(true).then((j) => j && setJob(j))}>המשך בלי לאמת כתובת</button>}
               </>
             ) : job.status === 'failed' || job.status === 'unsupported' ? (
               <>

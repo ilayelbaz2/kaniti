@@ -1,6 +1,8 @@
 // Cart-handoff state machine against a fake supermarket (no network, no real browser).
 process.env.KANITI_DB = ':memory:';
 process.env.KANITI_LOGIN_WAIT_MS = '20000';
+process.env.KANITI_QUIET_MS = '0';
+process.env.KANITI_POLL_MS = '20';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { BasketQuote } from '../shared/types.ts';
@@ -34,7 +36,8 @@ function fakeDriver(opts: { loggedInAfter?: number; fail?: string[] } = {}) {
         calls.added.push(...lines);
         return { added: lines.filter((l) => !opts.fail?.includes(l.productId)).map((l) => l.productId), failed: lines.filter((l) => opts.fail?.includes(l.productId)).map((l) => ({ productId: l.productId, reason: 'אזל' })) };
       },
-      readCart: async () => ({ itemCount: 2, total: 81.9 }),
+      readCartLines: async (_p: unknown, wanted: string[]) => ({ lines: wanted.filter((id) => calls.added.some((l) => (l as { productId: string }).productId === id) && !opts.fail?.includes(id)).map((productId) => ({ productId, quantity: productId === '11' ? 2 : 4 })), total: 81.9, source: 'server' as const }),
+      readDelivery: async () => ({ pageOk: false }),
     },
   };
 }

@@ -1,6 +1,8 @@
 // Exact-address delivery verification: the status comes only from what the supermarket page shows.
 process.env.KANITI_DB = ':memory:';
 process.env.KANITI_LOGIN_WAIT_MS = '20000';
+process.env.KANITI_QUIET_MS = '0';
+process.env.KANITI_POLL_MS = '20';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { BasketQuote, Household } from '../shared/types.ts';
@@ -103,7 +105,7 @@ function fakeDriver(reads: (DeliveryRead | Error)[], loggedInAfter = 0) {
       providerId: 'tivtaam', homeUrl: 'https://shop.example/', loginUrl: 'https://shop.example/login', cartUrl: 'https://shop.example/cart', allowAnonymous: false,
       isLoggedIn: async () => ++checks > loggedInAfter,
       addItems: async (_p: unknown, lines: { productId: string }[]) => { added.push(...lines.map((l) => l.productId)); return { added: lines.map((l) => l.productId), failed: [] }; },
-      readCart: async () => ({ itemCount: 2, total: 300 }),
+      readCartLines: async () => ({ lines: added.map((productId) => ({ productId, quantity: productId === '11' ? 2 : 4 })), total: 300, source: 'server' as const }),
       readDelivery: async () => { const r = reads[Math.min(n++, reads.length - 1)]; if (r instanceof Error) throw r; return r; },
     },
   };
@@ -141,15 +143,16 @@ test('cart handoff: unavailable address → nothing is added to the cart', async
   assert.equal(f.added.length, 0);
 });
 
-test('cart handoff: waits for the user to choose the address in the supermarket window, then continues', async () => {
-  const f = fakeDriver([R('chooseAddress'), R('chooseAddress'), R('confirmed')]);
-  const p = _runForTest(quote(), f.driver as never, deps());
-  await new Promise((r) => setTimeout(r, 50));
+test('cart handoff: waits for the user to choose the address in the supermarket window, then continues by itself', async () => {
+  let chosen = false;
+  const f = fakeDriver([R('chooseAddress')]);
+  const driver = { ...f.driver, readDelivery: async () => (chosen ? R('confirmed') : R('chooseAddress')) };
+  const p = _runForTest(quote(), driver as never, deps());
+  await new Promise((r) => setTimeout(r, 80));
   assert.equal(currentJob()!.status, 'address_required');
   assert.equal(currentJob()!.userAction, 'address');
-  resume();
-  await new Promise((r) => setTimeout(r, 20));
-  resume();
+  assert.equal(f.added.length, 0, 'nothing added while waiting');
+  chosen = true; // the user picks the address on the site — no button press needed
   const job = await p;
   assert.equal(job.delivery!.deliveryStatus, 'confirmed');
   assert.deepEqual(f.added, ['11', '22']);

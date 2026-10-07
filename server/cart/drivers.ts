@@ -1,6 +1,9 @@
 // Per-supermarket cart drivers. Each one runs inside the real supermarket page (same-origin, the user's own
 // session) and uses the same cart calls the website itself makes. No passwords, no payment, no checkout.
 // Refs: grocery-compare/shufersal_cart.py, supermeskill (Rami Levy / Prutah-ZuZ), rami-levy-mcp (2026).
+//
+// Rule: isLoggedIn / readDelivery / readCartLines NEVER navigate the page. They run while the user may be in the
+// middle of logging in or choosing an address in that same window — navigating would wipe what they're doing.
 import type { Page } from 'playwright-core';
 import { ZUZ_CHAINS } from '../providers/zuz.ts';
 import { kvGet } from '../db.ts';
@@ -9,7 +12,8 @@ import { fromZuz, parseDeliveryText, type DeliveryRead, type ZuzRaw } from './de
 
 export type CartLineIn = { productId: string; quantity: number; name: string; byWeight?: boolean };
 export type AddResult = { added: string[]; failed: { productId: string; reason: string }[] };
-export type CartState = { itemCount?: number; total?: number; deliveryWindow?: string };
+/** What the site's own cart holds after adding. `quantity` undefined = the site doesn't expose it. */
+export type CartReadback = { lines: { productId: string; quantity?: number }[]; total?: number; itemCount?: number; source: 'server' | 'page' };
 
 export interface CartDriver {
   providerId: string;
@@ -20,19 +24,43 @@ export interface CartDriver {
   allowAnonymous: boolean;
   isLoggedIn(page: Page): Promise<boolean>;
   addItems(page: Page, lines: CartLineIn[]): Promise<AddResult>;
-  readCart(page: Page): Promise<CartState>;
-  /** Delivery address / availability / fee / windows / minimum as the site itself shows them. Read-only. */
+  /** Reads the site's cart back (to verify what really got in). null = couldn't read it. Never navigates. */
+  readCartLines(page: Page, wanted: string[]): Promise<CartReadback | null>;
+  /** Delivery address / availability / fee / windows / minimum as the site itself shows them. Never navigates. */
   readDelivery(page: Page, home?: Address): Promise<DeliveryRead>;
 }
 
-/** Visible text of the page (what the user sees). */
-async function pageText(page: Page): Promise<string> {
-  return (await page.locator('body').innerText({ timeout: 10000 }).catch(() => '')).slice(0, 40000);
+/** Runs a function given as source text inside the page with one JSON argument (keeps bundler helpers out). */
+const inPage = <T,>(page: Page, src: string, arg: unknown = null) => page.evaluate(`(${src})(${JSON.stringify(arg)})`) as Promise<T>;
+
+/** HTML → readable text lines (block elements become line breaks). Pure; exported for tests. */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<(script|style|noscript)[^]*?<\/\1>/gi, ' ')
+    .replace(/<(br|\/div|\/li|\/p|\/h\d|\/tr|\/section|\/button|\/label)[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&').replace(/&#8362;|&#x20aa;/gi, '₪')
+    .split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
 }
 
 // ---------- Shufersal (Hybris): POST /online/he/cart/add with the XSRF token, like the "הוסף לסל" button ----------
 
 const SHUF = 'https://www.shufersal.co.il';
+
+/** Shufersal cart page HTML → which of our product codes are in it, the total, and the delivery facts. Pure. */
+export function parseShufersalCart(html: string, wanted: string[]): { readback: CartReadback | null; text: string } {
+  const text = htmlToText(html);
+  const present = wanted.filter((code) => html.includes(code));
+  const looksLikeCart = /סל הקניות|העגלה שלי|לתשלום|סה"כ|סיכום הזמנה|cart/i.test(text);
+  const m = text.match(/לתשלום\s*:?\s*₪?\s*([\d,.]+)/) ?? text.match(/סה"כ\s*:?\s*₪?\s*([\d,.]+)/);
+  if (!looksLikeCart) return { readback: null, text };
+  return { readback: { lines: present.map((productId) => ({ productId })), total: m ? parseFloat(m[1].replace(/,/g, '')) : undefined, source: 'page' }, text };
+}
+
+const fetchText = (page: Page, path: string) => inPage<string | null>(page, `async function (p) {
+  try { var r = await fetch(p, { credentials: 'include', headers: { Accept: 'text/html' } }); return r.ok ? (await r.text()).slice(0, 400000) : null; } catch (e) { return null; }
+}`, path).catch(() => null);
+
 const shufersal: CartDriver = {
   providerId: 'shufersal',
   homeUrl: `${SHUF}/online/he/A`,
@@ -40,50 +68,117 @@ const shufersal: CartDriver = {
   cartUrl: `${SHUF}/online/he/cart`,
   allowAnonymous: false,
   async isLoggedIn(page) {
-    return page.evaluate(async () => {
-      const r = await fetch('/online/he/my-account', { credentials: 'include' });
-      return r.ok && !/\/login/.test(r.url);
-    }).catch(() => false);
+    return inPage<boolean>(page, `async function () {
+      try { var r = await fetch('/online/he/my-account', { credentials: 'include' }); return r.ok && !/\\/login/.test(r.url); } catch (e) { return false; }
+    }`).catch(() => false);
   },
   async addItems(page, lines) {
-    return page.evaluate(async (lines) => {
-      const xsrf = decodeURIComponent((document.cookie.match(/(?:^|; )XSRF-TOKEN=([^;]+)/) || [])[1] || '');
-      const out = { added: [] as string[], failed: [] as { productId: string; reason: string }[] };
-      for (const l of lines) {
+    return inPage<AddResult>(page, `async function (lines) {
+      var xsrf = decodeURIComponent((document.cookie.match(/(?:^|; )XSRF-TOKEN=([^;]+)/) || [])[1] || '');
+      var out = { added: [], failed: [] };
+      for (var i = 0; i < lines.length; i++) {
+        var l = lines[i];
         try {
-          const qty = l.byWeight ? String(l.quantity) : String(Math.max(1, Math.round(l.quantity)));
-          const r = await fetch('/online/he/cart/add?cartContext%5BopenFrom%5D=CATEGORY&cartContext%5BrecommendationType%5D=PRODUCT', {
+          var qty = l.byWeight ? String(l.quantity) : String(Math.max(1, Math.round(l.quantity)));
+          var r = await fetch('/online/he/cart/add?cartContext%5BopenFrom%5D=CATEGORY&cartContext%5BrecommendationType%5D=PRODUCT', {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json', Accept: '*/*', 'X-Requested-With': 'XMLHttpRequest', csrftoken: xsrf, 'X-XSRF-TOKEN': xsrf },
-            body: JSON.stringify({ productCodePost: l.productId, productCode: l.productId, sellingMethod: l.byWeight ? 'BY_WEIGHT' : 'BY_UNIT', qty, frontQuantity: qty, comment: '', affiliateCode: '' }),
+            body: JSON.stringify({ productCodePost: l.productId, productCode: l.productId, sellingMethod: l.byWeight ? 'BY_WEIGHT' : 'BY_UNIT', qty: qty, frontQuantity: qty, comment: '', affiliateCode: '' }),
           });
-          const text = await r.text();
-          if (!r.ok || /"errors"\s*:\s*\[\s*\{/.test(text)) out.failed.push({ productId: l.productId, reason: `HTTP ${r.status}` });
+          var text = await r.text();
+          if (!r.ok || /"errors"\\s*:\\s*\\[\\s*\\{/.test(text)) out.failed.push({ productId: l.productId, reason: 'HTTP ' + r.status });
           else out.added.push(l.productId);
         } catch (e) { out.failed.push({ productId: l.productId, reason: String(e) }); }
       }
       return out;
-    }, lines);
+    }`, lines);
   },
-  async readCart(page) {
-    await page.goto(this.cartUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(2500);
-    const body = (await page.locator('body').innerText({ timeout: 10000 }).catch(() => '')).slice(0, 20000);
-    const m = body.match(/לתשלום\s*:?\s*[₪]?\s*([\d,.]+)/) ?? body.match(/שקלים חדשים\s*([\d,.]+)/);
-    const slot = body.match(/(יום[^\n]{0,30}\d{1,2}\/\d{1,2}[^\n]{0,30}\d{1,2}:\d{2})/);
-    return { total: m ? parseFloat(m[1].replace(/,/g, '')) : undefined, deliveryWindow: slot?.[1] };
+  async readCartLines(page, wanted) {
+    const html = await fetchText(page, '/online/he/cart');
+    return html ? parseShufersalCart(html, wanted).readback : null;
   },
   async readDelivery(page) {
-    // The cart page shows the delivery address, fee and the chosen / offered delivery slot for the logged-in account.
-    if (!page.url().startsWith(this.cartUrl)) await page.goto(this.cartUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(2500);
-    return parseDeliveryText(await pageText(page));
+    // The cart page (fetched, not navigated to) shows the delivery address and the chosen / offered slot.
+    const html = await fetchText(page, '/online/he/cart');
+    return html ? parseDeliveryText(htmlToText(html)) : { pageOk: false };
   },
 };
 
-// ---------- Rami Levy (Nuxt): the logged-in token from the site's store + POST /api/v2/cart ----------
+// ---------- Rami Levy (Nuxt): the logged-in token from the site's store + /api/v2/cart ----------
 
 const RL = 'https://www.rami-levy.co.il';
+
+/** Rami Levy cart response → product lines (the delivery-fee line is not a product). Pure. */
+export function ramiCartLines(j: unknown): { lines: { productId: string; quantity?: number }[]; deliveryFee?: number; total?: number } | null {
+  const o = j as { items?: { id: number | string; quantity?: number | string; is_delivery?: boolean; price?: number }[]; total?: number; price?: number } | null;
+  if (!o || !Array.isArray(o.items)) return null;
+  const delivery = o.items.find((it) => it.is_delivery);
+  const lines = o.items.filter((it) => !it.is_delivery).map((it) => ({ productId: String(it.id), quantity: it.quantity !== undefined ? Number(it.quantity) : undefined }));
+  const total = Number(o.total ?? o.price ?? NaN);
+  return { lines, deliveryFee: delivery?.price !== undefined ? Number(delivery.price) : undefined, total: Number.isFinite(total) ? total : undefined };
+}
+
+const RL_CART = `async function (arg) {
+  var root = document.querySelector('#__nuxt'); var vm = root && root.__vue__; var st = vm && vm.$store;
+  var user = st && st.state && st.state.authuser && st.state.authuser.user;
+  var headers = { 'Content-Type': 'application/json;charset=UTF-8', Accept: 'application/json', locale: 'he', ecomtoken: (user && user.token) || '' };
+  var storeId = null; try { storeId = st.getters['cart/getStoreId']; } catch (e) {}
+  storeId = String(storeId || (user && user.store_id) || arg.fallbackStore);
+  var cur = null;
+  try { var g = await fetch('/api/v2/cart', { headers: headers, credentials: 'include' }); cur = g.ok ? await g.json() : null; } catch (e) { cur = null; }
+  if (arg.mode === 'read') return cur;
+  // Never overwrite a cart we couldn't read — that would wipe what the user already had.
+  if (!cur || !Array.isArray(cur.items)) return { error: 'cannot_read_cart' };
+  var items = {};
+  cur.items.forEach(function (it) { if (!it.is_delivery) items[String(it.id)] = String(it.quantity); });
+  arg.lines.forEach(function (l) { items[l.productId] = Number(l.quantity).toFixed(2); });
+  var supplyAt = new Date(Date.now() + 86400000).toISOString();
+  var r = await fetch('/api/v2/cart', { method: 'POST', headers: headers, credentials: 'include', body: JSON.stringify({ store: storeId, isClub: 0, supplyAt: supplyAt, items: items, meta: null }) });
+  if (!r.ok) return { error: 'HTTP ' + r.status };
+  return await r.json().catch(function () { return { error: 'bad_json' }; });
+}`;
+
+// Looks through the site's own state for the delivery address / slot it has selected. Values stay in memory only.
+const RL_DELIVERY = `async function () {
+  var root = document.querySelector('#__nuxt'); var vm = root && root.__vue__; var st = vm && vm.$store;
+  if (!st || !st.state) return null;
+  var found = []; var seen = [];
+  function walk(o, path, depth) {
+    if (!o || typeof o !== 'object' || depth > 5 || seen.indexOf(o) >= 0 || found.length > 20) return;
+    seen.push(o);
+    var keys = Object.keys(o);
+    var city = keys.filter(function (k) { return /^city(_name)?$|cityName/i.test(k); })[0];
+    var street = keys.filter(function (k) { return /^street(_name)?$|streetName|^address(_line)?1?$/i.test(k); })[0];
+    if (city && street && typeof o[city] === 'string' && typeof o[street] === 'string') {
+      var num = keys.filter(function (k) { return /house|building|street_?num|^number$/i.test(k); })[0];
+      found.push({ path: path, city: o[city], street: o[street], number: num != null ? String(o[num]) : undefined });
+    }
+    keys.forEach(function (k) { try { walk(o[k], path + '.' + k, depth + 1); } catch (e) {} });
+  }
+  walk(st.state, 'state', 0);
+  var pick = found.filter(function (f) { return /deliver|ship|select|current|address|supply|order|checkout/i.test(f.path); })[0] || null;
+  var user = st.state.authuser && st.state.authuser.user;
+  var cart = null;
+  try { var g = await fetch('/api/v2/cart', { headers: { Accept: 'application/json', locale: 'he', ecomtoken: (user && user.token) || '' }, credentials: 'include' }); cart = g.ok ? await g.json() : null; } catch (e) {}
+  var slot = null; Object.keys(st.state).forEach(function (m) { var s = st.state[m]; if (s && typeof s === 'object') ['supplyAt', 'supply_at', 'selectedTime', 'deliveryTime', 'timeSlot'].forEach(function (k) { if (!slot && s[k] && typeof s[k] === 'string') slot = s[k]; }); });
+  return { address: pick, candidates: found.length, cart: cart, slot: slot, loggedIn: !!(user && user.token) };
+}`;
+
+/** Rami Levy page state → delivery facts. Confirmed only with an address in the site's delivery state AND evidence
+ *  of delivery (a delivery line in the cart or a chosen slot). Pure; exported for tests. */
+export function ramiDelivery(raw: { address: { street: string; number?: string; city: string } | null; cart: unknown; slot: string | null } | null): DeliveryRead {
+  if (!raw) return { pageOk: false };
+  const cart = ramiCartLines(raw.cart);
+  const read: DeliveryRead = { pageOk: true, fee: cart?.deliveryFee };
+  if (!raw.address) return { ...read, restriction: 'לא מצאתי באתר כתובת משלוח שנבחרה.' };
+  const number = raw.address.number ?? raw.address.street.match(/\d+/)?.[0];
+  read.address = { street: raw.address.street.replace(/\s*\d+\s*$/, '').trim(), number, city: raw.address.city };
+  read.addressSelected = true;
+  if (cart?.deliveryFee !== undefined || raw.slot) read.available = true;
+  if (raw.slot) read.windows = [raw.slot];
+  return read;
+}
+
 const ramilevy: CartDriver = {
   providerId: 'ramilevy',
   homeUrl: `${RL}/he`,
@@ -91,56 +186,43 @@ const ramilevy: CartDriver = {
   cartUrl: `${RL}/he`,
   allowAnonymous: false,
   async isLoggedIn(page) {
-    return page.evaluate(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const st = (document.querySelector('#__nuxt') as any)?.__vue__?.$store?.state;
-      return !!st?.authuser?.user?.token;
-    }).catch(() => false);
+    return inPage<boolean>(page, `function () {
+      var root = document.querySelector('#__nuxt'); var st = root && root.__vue__ && root.__vue__.$store && root.__vue__.$store.state;
+      return !!(st && st.authuser && st.authuser.user && st.authuser.user.token);
+    }`).catch(() => false);
   },
   async addItems(page, lines) {
     const fallbackStore = kvGet<number>('provider:ramilevy:store') ?? 331;
-    return page.evaluate(async ({ lines, fallbackStore }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const user = (document.querySelector('#__nuxt') as any)?.__vue__?.$store?.state?.authuser?.user;
-      const headers = { 'Content-Type': 'application/json;charset=UTF-8', Accept: 'application/json', locale: 'he', ecomtoken: user?.token ?? '' };
-      const store = String(user?.store_id ?? fallbackStore);
-      // Keep whatever is already in the cart, set Kaniti's lines on top.
-      let items: Record<string, string> = {};
-      try {
-        const cur = await (await fetch('/api/v2/cart', { headers, credentials: 'include' })).json();
-        for (const it of cur?.items ?? []) items[String(it.id)] = String(it.quantity);
-      } catch { items = {}; }
-      for (const l of lines) items[l.productId] = l.quantity.toFixed(2);
-      const supplyAt = new Date(Date.now() + 86400000).toISOString();
-      const r = await fetch('/api/v2/cart', { method: 'POST', headers, credentials: 'include', body: JSON.stringify({ store, isClub: 0, supplyAt, items, meta: null }) });
-      const out = { added: [] as string[], failed: [] as { productId: string; reason: string }[] };
-      if (!r.ok) { for (const l of lines) out.failed.push({ productId: l.productId, reason: `HTTP ${r.status}` }); return out; }
-      const j = await r.json().catch(() => ({}));
-      const inCart = new Set((j?.items ?? []).map((it: { id: number | string }) => String(it.id)));
-      for (const l of lines) {
-        if (inCart.size === 0 || inCart.has(l.productId)) out.added.push(l.productId);
-        else out.failed.push({ productId: l.productId, reason: 'לא נמצא בסניף שלכם' });
-      }
+    const j = await inPage<Record<string, unknown> | null>(page, RL_CART, { mode: 'add', lines, fallbackStore }).catch((e) => ({ error: String(e) }));
+    const out: AddResult = { added: [], failed: [] };
+    const parsed = j && !('error' in j) ? ramiCartLines(j) : null;
+    if (!parsed) {
+      const reason = j && 'error' in j && j.error === 'cannot_read_cart' ? 'לא הצלחתי לקרוא את העגלה הקיימת באתר — לא שיניתי אותה' : `האתר לא אישר (${(j as { error?: string })?.error ?? 'אין תשובה'})`;
+      for (const l of lines) out.failed.push({ productId: l.productId, reason });
       return out;
-    }, { lines, fallbackStore });
+    }
+    const inCart = new Set(parsed.lines.map((x) => x.productId));
+    for (const l of lines) {
+      if (inCart.has(l.productId)) out.added.push(l.productId);
+      else out.failed.push({ productId: l.productId, reason: 'לא נמצא בסניף שלכם' });
+    }
+    // The site's own cart view keeps its own copy; reload once so the window shows what's really in the cart.
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    return out;
   },
-  async readCart(page) {
-    return page.evaluate(async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const user = (document.querySelector('#__nuxt') as any)?.__vue__?.$store?.state?.authuser?.user;
-      const j = await (await fetch('/api/v2/cart', { headers: { Accept: 'application/json', locale: 'he', ecomtoken: user?.token ?? '' }, credentials: 'include' })).json().catch(() => null);
-      const total = Number(j?.total ?? j?.totals?.total ?? j?.price ?? NaN);
-      return { itemCount: Array.isArray(j?.items) ? j.items.length : undefined, total: Number.isFinite(total) ? total : undefined };
-    }).catch(() => ({}));
+  async readCartLines(page) {
+    const j = await inPage<unknown>(page, RL_CART, { mode: 'read', lines: [], fallbackStore: 0 }).catch(() => null);
+    const p = ramiCartLines(j);
+    return p ? { lines: p.lines, total: p.total, itemCount: p.lines.length, source: 'server' } : null;
   },
   async readDelivery(page) {
-    // The site shows the selected delivery address and slot in the header / cart panel for the logged-in account.
-    await page.waitForTimeout(1500);
-    return parseDeliveryText(await pageText(page));
+    return ramiDelivery(await inPage<Parameters<typeof ramiDelivery>[0]>(page, RL_DELIVERY).catch(() => null));
   },
 };
 
 // ---------- Stor.ai "ZuZ" chains (AngularJS): the site's own Cart service, which syncs to the account ----------
+
+const ZUZ_READY = `function () { try { return !!window.angular.element(document.body).injector().get('Cart'); } catch (e) { return false; } }`;
 
 function zuzDriver(id: string, host: string): CartDriver {
   return {
@@ -150,50 +232,59 @@ function zuzDriver(id: string, host: string): CartDriver {
     cartUrl: host,
     allowAnonymous: true,
     async isLoggedIn(page) {
-      return page.evaluate(() => {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const U = (window as any).angular.element(document.body).injector().get('User');
-          return !!(U?.session?.userId);
-        } catch { return false; }
-      }).catch(() => false);
+      return inPage<boolean>(page, `function () {
+        try { var U = window.angular.element(document.body).injector().get('User'); return !!(U && U.session && U.session.userId); } catch (e) { return false; }
+      }`).catch(() => false);
     },
     async addItems(page, lines) {
-      await page.waitForFunction(() => {
-        try { return !!(window as unknown as { angular: { element(e: Element): { injector(): unknown } } }).angular.element(document.body).injector(); } catch { return false; }
-      }, null, { timeout: 30000 });
-      return page.evaluate(async (lines) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const Cart = (window as any).angular.element(document.body).injector().get('Cart');
-        const out = { added: [] as string[], failed: [] as { productId: string; reason: string }[] };
-        for (const l of lines) {
+      await page.waitForFunction(`(${ZUZ_READY})()`, null, { timeout: 30000 });
+      return inPage<AddResult>(page, `async function (lines) {
+        var Cart = window.angular.element(document.body).injector().get('Cart');
+        var out = { added: [], failed: [] };
+        var idOf = function (x) { return String((x.product && (x.product.id || x.product.productId)) || x.retailerProductId || ''); };
+        for (var i = 0; i < lines.length; i++) {
+          var l = lines[i];
           try {
-            const existing = Object.values(Cart.lines ?? {}).find((x: unknown) => String((x as { product?: { id?: number } }).product?.id) === l.productId) as { quantity: number } | undefined;
-            if (existing) { existing.quantity = l.quantity; out.added.push(l.productId); continue; }
-            await Cart.addLine({ product: { id: Number(l.productId) }, quantity: l.quantity, isCase: false });
+            var existing = Object.keys(Cart.lines || {}).map(function (k) { return Cart.lines[k]; }).filter(function (x) { return idOf(x) === l.productId; })[0];
+            if (existing) {
+              existing.quantity = l.quantity;
+              if (typeof Cart.quantityChanged === 'function') Cart.quantityChanged(existing);
+            } else {
+              await Cart.addLine({ product: { id: Number(l.productId) }, quantity: l.quantity, isCase: false });
+            }
             out.added.push(l.productId);
-          } catch (e) { out.failed.push({ productId: l.productId, reason: String((e as Error)?.message ?? e).slice(0, 120) }); }
+          } catch (e) { out.failed.push({ productId: l.productId, reason: String((e && e.message) || e).slice(0, 120) }); }
         }
-        await new Promise((r) => setTimeout(r, 3000)); // the Cart service syncs to the server in the background
+        // Push the changes to the server cart before we read it back.
+        try { if (typeof Cart.save === 'function') await Cart.save(); } catch (e) {}
+        await new Promise(function (r) { setTimeout(r, 2500); });
         return out;
-      }, lines);
+      }`, lines);
     },
-    async readCart(page) {
-      return page.evaluate(() => {
+    async readCartLines(page) {
+      return inPage<CartReadback | null>(page, `async function () {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const Cart = (window as any).angular.element(document.body).injector().get('Cart');
-          const t = Cart.total ?? {};
-          const total = Number(t.finalPriceForView ?? t.priceForView ?? t.finalPrice ?? NaN);
-          return { itemCount: Object.keys(Cart.lines ?? {}).length, total: Number.isFinite(total) ? total : undefined };
-        } catch { return {}; }
-      }).catch(() => ({}));
+          var inj = window.angular.element(document.body).injector(); var Cart = inj.get('Cart'); var Config = inj.get('Config');
+          var idOf = function (x) { return String(x.retailerProductId || (x.product && (x.product.id || x.product.productId)) || ''); };
+          var isProduct = function (x) { return !x.type || x.type === 1; };
+          var t = Cart.total || {}; var total = Number(t.finalPriceForView != null ? t.finalPriceForView : t.priceForView);
+          if (Cart.serverCartId && Config.branch) {
+            var r = await fetch('/v2/retailers/' + Config.retailer.id + '/branches/' + Config.branch.id + '/carts/' + Cart.serverCartId + '?appId=4', { credentials: 'include', headers: { Accept: 'application/json' } });
+            var j = r.ok ? await r.json().catch(function () { return null; }) : null;
+            var lines = j && ((j.cart && j.cart.lines) || j.lines);
+            if (Array.isArray(lines)) return { lines: lines.filter(isProduct).map(function (x) { return { productId: idOf(x), quantity: Number(x.quantity) }; }), total: isFinite(total) ? total : undefined, source: 'server' };
+          }
+          var local = Object.keys(Cart.lines || {}).map(function (k) { return Cart.lines[k]; }).filter(isProduct);
+          if (!Cart.serverCartId) return null; // nothing was saved to the site yet
+          return { lines: local.map(function (x) { return { productId: idOf(x), quantity: Number(x.quantity) }; }), total: isFinite(total) ? total : undefined, source: 'page' };
+        } catch (e) { return null; }
+      }`).catch(() => null);
     },
     async readDelivery(page, home) {
       // The site's own state: which delivery area the cart is set to, the site's lookup of the household address
       // against its delivery polygons, and the free delivery slots for that area. Read-only.
       const query = home?.street ? `${home.street}, ${home.city}` : '';
-      return fromZuz(await page.evaluate(`(${ZUZ_DELIVERY})(${JSON.stringify({ query })})`).catch(() => null) as ZuzRaw | null);
+      return fromZuz(await inPage<ZuzRaw | null>(page, ZUZ_DELIVERY, { query }).catch(() => null));
     },
   };
 }

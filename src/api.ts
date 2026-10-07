@@ -13,7 +13,7 @@ async function call<T>(path: string, body?: unknown, method?: string): Promise<T
 
 export type DeliveryResult = { providerId: string; name: string; status?: 'confirmed' | 'unavailable' | 'user_action_required' | 'unknown'; needsLogin?: boolean; addressText?: string; delivers: boolean | null; note: string; deliveryFee?: number; minOrder?: number; checkedLive: boolean };
 export type StoreOption = { storeId: string; name: string; city: string; address?: string };
-export type CatalogItem = { id: string; label: string; emoji: string; staple: boolean; category: string; group: string; kidItem: boolean; dairy: boolean };
+export type CatalogItem = { id: string; label: string; emoji: string; staple: boolean; category: string; group: string; kidItem: boolean; dairy: boolean; meat: boolean };
 export type LearningEventRow = { id: number; type: string; needId?: string; label?: string; value?: unknown; createdAt: string };
 
 export const api = {
@@ -48,7 +48,8 @@ export const api = {
   feedback: (id: string, needId: string, value: string) => call<Purchase>(`/purchases/${id}/feedback`, { needId, value }),
   prepareCart: (providerId?: string, verifyOnly = false) => call<CartJob>('/cart/prepare', { providerId, verifyOnly }),
   cartJob: () => call<CartJob | null>('/cart/job'),
-  resumeCart: (withoutLogin = false) => call<CartJob | null>('/cart/resume', { withoutLogin }),
+  resumeCart: (kind: 'continue' | 'skip_login' | 'skip_address' = 'continue') => call<CartJob | null>('/cart/resume', { kind }),
+  showCart: () => call<{ ok: boolean; message: string }>('/cart/show', {}),
   cartSeed: () => call<{ providerId: string; providerName: string; total?: number; items: { needId: string; quantity: number; productName?: string; price?: number }[] } | null>('/cart/seed'),
   devAdvance: (days: number) => call<AppState>('/dev/advance', { days }),
 };

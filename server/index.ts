@@ -48,7 +48,7 @@ function appState(): AppState {
 }
 
 app.get('/api/state', wrap(() => appState()));
-app.get('/api/catalog', wrap(() => CONCEPTS.map((c) => ({ id: c.id, label: c.label, emoji: c.emoji, staple: !!c.staple, category: c.category, group: stapleGroupOf(c), kidItem: !!c.kidItem, dairy: !!c.dairy }))));
+app.get('/api/catalog', wrap(() => CONCEPTS.map((c) => ({ id: c.id, label: c.label, emoji: c.emoji, staple: !!c.staple, category: c.category, group: stapleGroupOf(c), kidItem: !!c.kidItem, dairy: !!c.dairy, meat: !!c.meat || c.category === 'fish' }))));
 
 // ---------- onboarding ----------
 
@@ -207,7 +207,12 @@ app.post('/api/purchases/:id/feedback', wrap((req) => {
 
 app.post('/api/cart/prepare', wrap(async (req) => svc.prepareProviderCart(req.body.providerId, !!req.body.verifyOnly)));
 app.get('/api/cart/job', wrap(() => cartJobs.currentJob()));
-app.post('/api/cart/resume', wrap((req) => { cartJobs.resume(!!req.body?.withoutLogin); return cartJobs.currentJob(); }));
+app.post('/api/cart/resume', wrap((req) => {
+  const kind = req.body?.kind as cartJobs.ResumeKind | undefined;
+  cartJobs.resume(kind && ['continue', 'skip_login', 'skip_address'].includes(kind) ? kind : req.body?.withoutLogin ? 'skip_login' : 'continue');
+  return cartJobs.currentJob();
+}));
+app.post('/api/cart/show', wrap(() => cartJobs.showCart()));
 app.post('/api/cart/clear', wrap(() => { cartJobs.clearJob(); return { ok: true }; }));
 app.get('/api/cart/seed', wrap(() => cartJobs.cartSeed()));
 

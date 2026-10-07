@@ -329,10 +329,13 @@ export type CartJobLine = {
   label: string;
   productId?: string;
   productName?: string;
+  brand?: string;
+  sizeText?: string;
   quantity: number;
   price?: number;
   byWeight?: boolean; // sold per kg — quantity is kilograms
-  state: 'pending' | 'added' | 'failed' | 'skipped';
+  /** added = found in the site's cart on read-back; unverified = sent, but the cart couldn't be read back */
+  state: 'pending' | 'added' | 'failed' | 'skipped' | 'unverified';
   reason?: string;
 };
 
@@ -346,6 +349,7 @@ export type CartJob = {
   updatedAt: string;
   lines: CartJobLine[];
   cartUrl?: string;
+  cartVerified?: boolean; // the site's cart was read back after adding
   cartTotal?: number; // as the supermarket shows it
   cartItemCount?: number;
   preexistingItems?: number; // items that were already in the site's cart before Kaniti added its lines
