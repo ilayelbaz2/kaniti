@@ -17,7 +17,9 @@ const BASE: Record<string, [string, number][]> = {
   COLA_ZERO: [['קוקה קולה זירו 6*1.5 ליטר', 39.9], ['פפסי מקס זירו 6*1.5 ליטר', 29.9]],
   SODA: [['סודה מי עדן 6*1.5 ליטר', 15.9]],
   PEANUT_BUTTER: [['חמאת בוטנים ביגי 500 גרם', 19.9]],
-  CHOCO_SPREAD: [['ממרח שוקולד השחר העולה 400 גרם', 16.9], ['נוטלה ממרח 350 גרם', 22.9]],
+  CHOCO_SPREAD: [['ממרח שוקולד השחר העולה פרווה 400 גרם', 16.9], ['נוטלה ממרח 350 גרם', 22.9]],
+  DAIRY_FREE_DESSERT: [['מעדן סויה וניל אלפרו 4*125 גרם', 15.9], ['מעדן סויה שוקולד 4 יח', 13.9]],
+  ONIONS: [['בצל יבש לק"ג', 4.9]], CABBAGE: [['כרוב לבן', 6.9]], LETTUCE: [['חסה ערבית', 5.9]], KOHLRABI: [['קולרבי לק"ג', 7.9]],
   PASTA: [['פסטה פנה אסם 500 גרם', 6.9], ['ספגטי ברילה 500 גרם', 8.9]],
   PTITIM: [['פתיתים אסם אפויים 500 גרם', 6.5]],
   RICE: [['אורז פרסי סוגת 1 ק"ג', 11.9]],
@@ -62,7 +64,7 @@ export function demoProvider(id: string, name: string, fee: number): GroceryProv
       return { providerId: id, status: 'likely', delivers: true, note: 'דמו — לא נבדק מול הרשת', deliveryFee: fee, minOrder: 150, checkedLive: false };
     },
     async searchProducts(query: string): Promise<ProductSearchResult[]> {
-      const concept = CONCEPTS.find((c) => c.query === query || c.label === query || c.synonyms.some((s) => query.includes(s)));
+      const concept = CONCEPTS.find((c) => c.query === query) ?? CONCEPTS.find((c) => c.label === query || c.synonyms.some((s) => query.includes(s)));
       const rows = concept ? BASE[concept.id] ?? [] : [];
       return rows.map(([n, p], i) => {
         const v = variant(id, i, n);
