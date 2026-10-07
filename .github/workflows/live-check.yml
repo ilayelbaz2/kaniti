@@ -21,6 +21,8 @@ jobs:
       - run: npx tsx scripts/live-check.ts "${{ github.event.inputs.city || 'רמת גן' }}"
       - run: npx tsx scripts/match-report.ts
         continue-on-error: true
+      - run: KANITI_BROWSER_HEADLESS=1 npx tsx scripts/delivery-probe.ts tivtaam
+        continue-on-error: true
       - run: KANITI_BROWSER_HEADLESS=1 npx tsx scripts/cart-check.ts tivtaam
         continue-on-error: true
       - run: KANITI_BROWSER_HEADLESS=1 npx tsx scripts/rehearsal.ts "${{ github.event.inputs.city || 'רמת גן' }}"
