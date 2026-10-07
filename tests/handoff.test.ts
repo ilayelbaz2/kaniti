@@ -223,3 +223,15 @@ test('ZuZ cart readback: no server cart → null (unverified), never the page\'s
   const page = { evaluate: async (src: string) => (src.includes('serverCartId') ? null : undefined) };
   assert.equal(await cartDriver('tivtaam')!.readCartLines(page as never, ['1']), null);
 });
+
+test('ZuZ cart readback uses the site server\'s own answer to its save (captured), never the local copy', async () => {
+  let src = '';
+  await cartDriver('tivtaam')!.readCartLines({ evaluate: async (x: string) => { src = x; return null; } } as never, ['11']);
+  const run = (win: Record<string, unknown>) => new Function('window', 'fetch', 'document', `return ${src}`)(win, async () => ({ ok: false, status: 404 }), { body: {} });
+  const angular = (cart: object) => ({ element: () => ({ injector: () => ({ get: (n: string) => (n === 'Cart' ? cart : n === 'Config' ? { branch: { id: 924 }, retailer: { id: 1062 } } : { get: async () => ({ status: 200, data: '<html>' }) }) }) }) });
+  const cart = { serverCartId: 5, total: { finalPriceForView: 40 }, lines: { a: { product: { id: 99 }, quantity: 7 } } };
+  const ok = await run({ angular: angular(cart), __kanitiCartResps: [{ path: '/v2/retailers/1062/branches/924/carts/5', status: 200, at: 1, body: { cart: { lines: [{ retailerProductId: 11, quantity: 2, type: 1 }] } } }] });
+  assert.deepEqual(ok.lines, [{ productId: '11', quantity: 2 }]);
+  assert.equal(ok.source, 'server');
+  assert.equal(await run({ angular: angular(cart), __kanitiCartResps: [] }), null, 'no server answer → unverified, even though the page has local lines');
+});

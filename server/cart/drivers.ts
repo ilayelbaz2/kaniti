@@ -222,6 +222,26 @@ const ramilevy: CartDriver = {
 
 // ---------- Stor.ai "ZuZ" chains (AngularJS): the site's own Cart service, which syncs to the account ----------
 
+/** Keeps the site's own cart responses (what its server answered to the site's save), to read the cart back from. */
+const ZUZ_CAPTURE = `
+  if (!window.__kanitiCartCapture) {
+    window.__kanitiCartCapture = true; window.__kanitiCartResps = [];
+    var keep = function (url, status, text) {
+      if (!/\\/carts?(\\/|\\?|$)/i.test(String(url))) return;
+      var body = null; try { body = JSON.parse(text); } catch (e) { return; }
+      window.__kanitiCartResps.push({ path: String(url).split('?')[0].replace(/^https?:\\/\\/[^/]+/, ''), status: status, at: Date.now(), body: body });
+      if (window.__kanitiCartResps.length > 6) window.__kanitiCartResps.shift();
+    };
+    var open = XMLHttpRequest.prototype.open, send = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (m, u) { this.__kanitiUrl = u; return open.apply(this, arguments); };
+    XMLHttpRequest.prototype.send = function () {
+      var x = this; x.addEventListener('load', function () { try { keep(x.__kanitiUrl, x.status, x.responseType === '' || x.responseType === 'text' ? x.responseText : JSON.stringify(x.response)); } catch (e) {} });
+      return send.apply(this, arguments);
+    };
+    var f = window.fetch;
+    window.fetch = function (u, o) { return f.apply(this, arguments).then(function (r) { try { r.clone().text().then(function (t) { keep(typeof u === 'string' ? u : (u && u.url), r.status, t); }); } catch (e) {} return r; }); };
+  }`;
+
 const ZUZ_READY = `function () { try { return !!window.angular.element(document.body).injector().get('Cart'); } catch (e) { return false; } }`;
 
 function zuzDriver(id: string, host: string): CartDriver {
@@ -239,6 +259,7 @@ function zuzDriver(id: string, host: string): CartDriver {
     async addItems(page, lines) {
       await page.waitForFunction(`(${ZUZ_READY})()`, null, { timeout: 30000 });
       return inPage<AddResult>(page, `async function (lines) {
+        ${ZUZ_CAPTURE}
         var Cart = window.angular.element(document.body).injector().get('Cart');
         var out = { added: [], failed: [] };
         var idOf = function (x) { return String((x.product && (x.product.id || x.product.productId)) || x.retailerProductId || ''); };
@@ -280,10 +301,14 @@ function zuzDriver(id: string, host: string): CartDriver {
             return Array.isArray(ls) ? ls : null;
           };
           var done = function (ls) { return { lines: ls.filter(isProduct).map(function (x) { return { productId: idOf(x), quantity: Number(x.quantity) }; }), total: isFinite(total) ? total : undefined, source: 'server' }; };
+          // 1. What the site's server answered to the site's own save (captured while adding).
+          var caps = (window.__kanitiCartResps || []).slice().reverse();
+          diag.captured = caps.map(function (c) { return { path: c.path, status: c.status, keys: Object.keys((c.body && (c.body.cart || c.body)) || {}).slice(0, 10) }; });
+          for (var ci = 0; ci < caps.length; ci++) { if (caps[ci].status >= 200 && caps[ci].status < 300) { var lc = linesOf(caps[ci].body); if (lc) { diag.used = caps[ci].path; return done(lc); } } }
           try {
             var r1 = await inj.get('$http').get(url, { params: { appId: 4 } });
             var l1 = linesOf(r1.data);
-            diag.tries.push({ via: 'http', status: r1.status, keys: Object.keys(r1.data || {}).slice(0, 12), lines: l1 ? l1.length : null });
+            diag.tries.push({ via: 'http', status: r1.status, type: typeof r1.data, keys: typeof r1.data === 'object' ? Object.keys(r1.data || {}).slice(0, 12) : null, lines: l1 ? l1.length : null });
             if (l1) return done(l1);
           } catch (e) { diag.tries.push({ via: 'http', status: e && e.status, err: String((e && (e.statusText || e.message)) || e).slice(0, 120) }); }
           var r = await fetch(url + '?appId=4', { credentials: 'include', headers: { Accept: 'application/json' } });
