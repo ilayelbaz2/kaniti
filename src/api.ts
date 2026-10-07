@@ -13,6 +13,8 @@ async function call<T>(path: string, body?: unknown, method?: string): Promise<T
 
 export type DeliveryResult = { providerId: string; name: string; status?: 'confirmed' | 'unavailable' | 'user_action_required' | 'unknown'; needsLogin?: boolean; addressText?: string; delivers: boolean | null; note: string; deliveryFee?: number; minOrder?: number; checkedLive: boolean };
 export type StoreOption = { storeId: string; name: string; city: string; address?: string };
+export type SearchCard = ProductSearchResult & { providerName: string; ambiguous: boolean };
+export type SearchResponse = { query: string; concept?: { id: string; label: string; emoji: string }; results: SearchCard[]; failures: string[] };
 export type CatalogItem = { id: string; label: string; emoji: string; staple: boolean; category: string; group: string; kidItem: boolean; dairy: boolean; meat: boolean };
 export type LearningEventRow = { id: number; type: string; needId?: string; label?: string; value?: unknown; createdAt: string };
 
@@ -34,7 +36,9 @@ export const api = {
   alternatives: (needId: string) => call<ProductSearchResult[]>(`/basket/${needId}/alternatives`),
   replace: (needId: string, productId?: string) => call<{ state: AppState; replacements: number }>(`/basket/${needId}/replace`, { productId }),
   why: (needId: string) => call<{ text: string }>(`/basket/${needId}/why`),
-  add: (needId: string, quantity?: number) => call<AppState>('/basket/add', { needId, quantity }),
+  add: (needId: string, quantity?: number, product?: { providerId: string; productId: string }) => call<AppState>('/basket/add', { needId, quantity, product }),
+  addLabel: (newLabel: string, quantity?: number, product?: { providerId: string; productId: string }) => call<AppState>('/basket/add', { newLabel, quantity, product }),
+  search: (q: string) => call<SearchResponse>(`/products/search?q=${encodeURIComponent(q)}`),
   patchNeed: (id: string, patch: unknown) => call<AppState>(`/needs/${id}`, patch, 'PATCH'),
   setStock: (id: string, qty: number) => call<AppState>(`/needs/${id}/stock`, { qty }),
   events: () => call<LearningEventRow[]>('/events'),

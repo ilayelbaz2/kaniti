@@ -2,7 +2,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Basket, ChatMessage, Household, HouseholdNeed, LearningEvent, Purchase, ProductSearchResult, Comparison } from '../shared/types.ts';
+import type { Basket, ChatMessage, Household, HouseholdNeed, LearningEvent, Purchase, PriceSnapshot, ProductSearchResult, Comparison } from '../shared/types.ts';
 import type { Concept } from './catalog.ts';
 
 const file = process.env.KANITI_DB ?? path.resolve('data/kaniti.db');
@@ -17,6 +17,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, need_id TEXT, json TEXT NOT NULL, created_at TEXT);
   CREATE TABLE IF NOT EXISTS purchases (id TEXT PRIMARY KEY, json TEXT NOT NULL, created_at TEXT);
   CREATE TABLE IF NOT EXISTS chat (id TEXT PRIMARY KEY, json TEXT NOT NULL, created_at TEXT);
+  CREATE TABLE IF NOT EXISTS price_snapshots (local_date TEXT, provider_id TEXT, need_id TEXT, json TEXT NOT NULL, PRIMARY KEY (local_date, provider_id, need_id));
   CREATE TABLE IF NOT EXISTS prices (
     provider_id TEXT, product_id TEXT, need_id TEXT, name TEXT, price REAL, promo_price REAL,
     source TEXT, json TEXT NOT NULL, fetched_at TEXT
@@ -70,6 +71,15 @@ export const store = {
       ? db.prepare('SELECT id, json FROM events WHERE need_id = ? ORDER BY id DESC LIMIT ?').all(needId, limit)
       : db.prepare('SELECT id, json FROM events ORDER BY id DESC LIMIT ?').all(limit);
     return (rows as { id: number; json: string }[]).map((r) => ({ ...JSON.parse(r.json), id: r.id }));
+  },
+
+  /** One price per (day, provider, need) — the latest of the day wins. For learning cheap weekdays. */
+  addSnapshots(rows: PriceSnapshot[]) {
+    const st = db.prepare('INSERT OR REPLACE INTO price_snapshots (local_date, provider_id, need_id, json) VALUES (?, ?, ?, ?)');
+    for (const r of rows) st.run(r.localDate, r.providerId, r.needId, JSON.stringify(r));
+  },
+  snapshots(sinceDate: string): PriceSnapshot[] {
+    return (db.prepare('SELECT json FROM price_snapshots WHERE local_date >= ?').all(sinceDate) as { json: string }[]).map((r) => JSON.parse(r.json));
   },
 
   purchases(): Purchase[] {

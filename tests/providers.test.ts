@@ -41,6 +41,95 @@ test('ZuZ (Victory/Yenot Bitan/...) → sale + multi-buy specials', () => {
   assert.equal(r[1].promoText, '3 ב-12');
 });
 
+test('ZuZ: full long name beats the 20-char localName; size, weight and brand', () => {
+  const r = parseZuz('tivtaam', { products: [
+    { id: 1, localName: 'פסטה מריה  פסטה ביצי', names: { 1: { short: 'פסטה ביצים', long: 'פסטה מריה פסטה ביצים טליאטלה 500 גרם' } }, brand: { names: { 1: 'פסטה מריה' } }, weight: 500, unitOfMeasure: { names: { 1: 'גרם' } }, branch: { regularPrice: 12.9 } },
+    { id: 2, localName: 'חזה עוף טרי', isWeighable: true, brand: { names: { 1: 'כללי' } }, branch: { regularPrice: 39.9 } },
+    { id: 3, localName: 'מים מינרליים', weight: 1.5, unitOfMeasure: { names: { 1: 'ליטר' } }, branch: { regularPrice: 3,
+      specials: [{ names: { 1: { name: '6 ב-15' } }, endDate: '2026-10-12T20:59:59.000Z', firstLevel: { type: 2, firstPurchaseTotal: 6, firstGift: { total: 15 } } }] } },
+  ] });
+  assert.equal(r[0].name, 'פסטה מריה פסטה ביצים טליאטלה 500 גרם');
+  assert.equal(r[0].brand, 'פסטה מריה');
+  assert.equal(r[0].sizeText, '500 גרם');
+  assert.equal(r[0].byWeight, undefined);
+  assert.equal(r[1].byWeight, true);
+  assert.equal(r[1].sizeText, 'לק"ג');
+  assert.equal(r[1].brand, undefined, 'placeholder brand dropped');
+  assert.equal(r[2].sizeText, '1.5 ליטר');
+  assert.equal(r[2].promoPrice, 2.5);
+  assert.equal(r[2].promoMinQty, 6);
+  assert.equal(r[2].promoEndsAt, '2026-10-12', 'UTC end time → Israel date');
+});
+
+test('Shufersal promotion messages → per-unit price', () => {
+  const row = (code: string, price: number, promotionMsg: string) => ({ code, name: 'מוצר ' + code, price: { value: price }, promotionMsg });
+  const r = parseShufersal({ results: [
+    row('a', 10, '1+1'),
+    row('b', 12, 'השני ב-50%'),
+    row('c', 20, 'השני בחצי מחיר'),
+    row('d', 4, '3 ב-10'),
+    row('e', 9, '2+1 מתנה'),
+    row('f', 10, 'ב-50% הנחה'),
+    row('g', 10, '2 ב-50'),
+  ] } as never);
+  const by = Object.fromEntries(r.map((x) => [x.productId, x]));
+  assert.deepEqual([by.a.promoPrice, by.a.promoMinQty], [5, 2]);
+  assert.deepEqual([by.b.promoPrice, by.b.promoMinQty], [9, 2]);
+  assert.deepEqual([by.c.promoPrice, by.c.promoMinQty], [15, 2]);
+  assert.deepEqual([by.d.promoPrice, by.d.promoMinQty], [3.33, 3]);
+  assert.deepEqual([by.e.promoPrice, by.e.promoMinQty], [6, 3]);
+  assert.equal(by.f.promoPrice, undefined, 'a bare percentage is not a multi-buy');
+  assert.equal(by.g.promoPrice, undefined, '2 for 50 without ₪ is not believable for a 10₪ item');
+});
+
+test('Shufersal: weighted flag, cleaned brand, promotion end date', () => {
+  const r = parseShufersal({ results: [
+    { code: 'w', name: 'עגבניות', price: { value: 7.9 }, sellingMethod: { code: 'BY_WEIGHT' }, valueForComparison: 7.9, unitForComparison: 'לק"ג', brand: { name: 'General' }, manufacturer: 'ללא מותג' },
+    { code: 'p', name: 'טונה בשמן', price: { value: 14 }, brand: null, manufacturer: 'סטארקיסט', unitDescription: '4*160 גרם', promotionMsg: "2 יח' ב- 22 ₪", potentialPromotions: [{ endDate: '2026-10-15' }] },
+  ] } as never);
+  assert.equal(r[0].byWeight, true);
+  assert.equal(r[0].unitPriceText, '7.9 לק"ג');
+  assert.equal(r[0].brand, undefined);
+  assert.equal(r[1].brand, 'סטארקיסט');
+  assert.equal(r[1].sizeText, '4*160 גרם');
+  assert.equal(r[1].byWeight, undefined);
+  assert.equal(r[1].promoEndsAt, '2026-10-15');
+});
+
+test('Rami Levy: multi-buy sale is a total for cmt units; brand, size, by-kilo', () => {
+  const r = parseRamiLevy({ data: [
+    { id: 1, name: 'במבה 80 גרם', price: { price: 5.5 }, gs: { BrandName: 'אסם', Net_Content: { text: '80 גרם' } }, sale: [{ scm: 10, cmt: 2, name: '2 ב-10 ש"ח', is_club: 0, to: '2026-10-20' }], available_in: [331] },
+    { id: 2, name: 'עגבניות', price: { price: 7.9 }, prop: { by_kilo: 1 }, gs: { BrandName: 'כללי' }, available_in: [331] },
+    { id: 3, name: 'קפה', price: { price: 30 }, sale: [{ scm: 50, cmt: 2, is_club: 1 }], available_in: [331] },
+  ] as never }, 331);
+  assert.equal(r[0].promoPrice, 5);
+  assert.equal(r[0].promoMinQty, 2);
+  assert.equal(r[0].promoEndsAt, '2026-10-20');
+  assert.equal(r[0].brand, 'אסם');
+  assert.equal(r[0].sizeText, '80 גרם');
+  assert.equal(r[1].byWeight, true);
+  assert.equal(r[1].brand, undefined);
+  assert.equal(r[2].promoPrice, undefined, 'club-only multi-buy still excluded');
+});
+
+test('demo products identify themselves: brand or produce, size or by weight, some promo end dates', async () => {
+  const { CONCEPTS } = await import('../server/catalog.ts');
+  const all = [];
+  for (const id of ['d1', 'd2', 'd3', 'd4']) {
+    const p = demoProvider(id, id, 30);
+    for (const c of CONCEPTS) all.push(...(await p.searchProducts(c.query)));
+  }
+  assert.ok(all.length > 50);
+  for (const x of all) assert.ok(x.byWeight || x.sizeText, `size: ${x.name}`);
+  assert.ok(all.filter((x) => x.brand).length > all.length * 0.7, 'most demo products carry a brand');
+  assert.equal(all.find((x) => x.name.startsWith('חלב 3% תנובה'))!.brand, 'תנובה');
+  assert.equal(all.find((x) => x.name.startsWith('חלב 3% תנובה'))!.sizeText, '1 ליטר');
+  assert.ok(all.filter((x) => x.byWeight).every((x) => /לק"ג/.test(x.name)));
+  const promos = all.filter((x) => x.promoPrice);
+  for (const x of promos.filter((y) => y.promoEndsAt)) assert.match(x.promoEndsAt!, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(promos.some((x) => x.promoEndsAt), 'some demo promos carry an end date');
+});
+
 test('a failing provider does not break the scan', async () => {
   const broken = { ...demoProvider('broken', 'רשת שבורה', 30), searchProducts: async () => { throw new Error('HTTP 403'); } };
   const ok = demoProvider('ok', 'רשת תקינה', 30);

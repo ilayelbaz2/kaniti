@@ -8,6 +8,9 @@ import { checkInQuestions, explainItem, flexText, fmt } from '../engine/basket.t
 import { compareBasket, explainStoreChoice } from '../engine/compare.ts';
 import * as svc from '../service.ts';
 import type { Action } from './actions.ts';
+import { loadContext, saveContext } from './context.ts';
+import { productLine } from '../../shared/product.ts';
+import { providerName } from '../providers/index.ts';
 
 type Out = { lines: string[]; components: ChatComponent[]; changes: string[] };
 type Pending = { horizon: number; needIds: string[] };
@@ -25,13 +28,13 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
   let stateTouched = false;
   let basketHandled = false;
 
-  // "המותג הזה" refers to the item we were just talking about.
-  const focusIds = actions.map((a) => ('needId' in a ? a.needId : undefined)).filter((x): x is string => !!x && x !== 'FOCUS');
-  if (focusIds.length) kvSet('focusNeed', focusIds[focusIds.length - 1]);
+  // "המותג הזה" / "אותו" refer to what the conversation was just about.
+  const ctx = loadContext();
   for (const a of actions) if (a.type === 'updatePreference' && a.needId === 'FOCUS') {
-    const f = kvGet<string>('focusNeed');
-    if (f) a.needId = f; else { out.lines.push('על איזה מוצר מדובר? למשל: "אל תציע את המרכך הזה".'); a.needId = ''; }
+    if (ctx?.focusNeedId) a.needId = ctx.focusNeedId; else { out.lines.push('על איזה מוצר מדובר? למשל: "אל תציע את המרכך הזה".'); a.needId = ''; }
   }
+  const focusIds = actions.map((a) => ('needId' in a ? a.needId : undefined)).filter((x): x is string => !!x && x !== 'FOCUS');
+  let focusLabel: string | undefined;
 
   for (const a of actions) {
     if (a.type === 'updatePreference' && !a.needId) continue;
@@ -144,21 +147,46 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
         break;
       }
       case 'addBasketItem': {
+        // Unknown product ("שים גם חרדל"): look it up first — never add a name we can't find without asking.
+        if (!a.needId && a.newLabel && !a.force) {
+          const r = await svc.searchProducts(a.newLabel);
+          focusLabel = a.newLabel;
+          if (r.concept) { a.needId = r.concept.id; }
+          else if (!r.results.length) {
+            out.lines.push(r.failures.length && r.failures.length >= 2 ? `לא הצלחתי לבדוק את "${a.newLabel}" כרגע (${r.failures.join(', ')} לא ענו).` : `לא מצאתי "${a.newLabel}" ברשתות שלכם.`);
+            out.components.push({ type: 'quick_replies', options: [{ label: 'להוסיף לרשימה בכל זאת', send: `#addlabel ${a.newLabel}` }, { label: 'לא, עזוב', send: '#noop' }] });
+            break;
+          } else {
+            const best = [...r.results].filter((x) => !x.ambiguous).sort((x, y) => (x.promoPrice ?? x.price) - (y.promoPrice ?? y.price))[0] ?? r.results[0];
+            const { item } = await svc.addItem({ newLabel: a.newLabel, quantity: a.quantity, conditional: a.conditional, product: { providerId: best.providerId, productId: best.productId } });
+            out.changes.push(`${item.emoji} ${item.label}: ${item.quantity} × ${productLine(best)} · ₪${best.promoPrice ?? best.price} ב${best.providerName}`);
+            out.components.push({ type: 'quick_replies', options: [{ label: 'לבחור מוצר אחר', send: `@open:add:${a.newLabel}` }] });
+            focusIds.push(item.needId);
+            basketHandled = true;
+            break;
+          }
+        }
         const { item } = await svc.addItem(a);
-        const price = item.product ? ` · ₪${item.product.price}${item.product.promoText ? ` (${item.product.promoText})` : ''}` : '';
+        const price = item.product ? ` · ${productLine(item.product)} · ₪${item.product.price}${item.product.promoText ? ` (${item.product.promoText})` : ''}` : '';
         if (item.condition) {
           out.changes.push(`${item.emoji} ${item.label}: ${item.condition.met ? `${item.quantity} × ${item.unit} נכנסו לסל — ${item.condition.note}` : item.condition.met === false ? `מחכה למחיר טוב — ${item.condition.note}` : 'נכנס בתנאי שיהיה מחיר טוב (אבדוק כשיהיו מחירים)'}`);
         } else out.changes.push(`${item.emoji} ${item.label}: ${item.quantity} × ${item.unit}${price}`);
+        focusIds.push(item.needId);
         basketHandled = true;
         break;
       }
       case 'updateBasketQuantity': {
         const c = getConcept(a.needId);
-        try {
-          svc.setQuantity(a.needId, a.quantity);
-          out.changes.push(`${c.emoji} ${c.label}: ${a.quantity} × ${c.packLabel}`);
-        } catch {
-          const { item } = await svc.addItem({ needId: a.needId, quantity: a.quantity });
+        const cur = store.basket()?.items.find((i) => i.needId === a.needId);
+        const target = a.quantity ?? Math.max(0, (cur?.quantity ?? 0) + (a.delta ?? 0));
+        if (target <= 0) {
+          svc.removeItem(a.needId, true);
+          out.changes.push(`${c.emoji} ${c.label}: הורד מהסל (רק הפעם)`);
+        } else if (cur) {
+          svc.setQuantity(a.needId, target);
+          out.changes.push(`${c.emoji} ${c.label}: ${fmt(target)} × ${c.packLabel}`);
+        } else {
+          const { item } = await svc.addItem({ needId: a.needId, quantity: target });
           out.changes.push(`${item.emoji} ${item.label}: ${item.quantity} × ${item.unit}`);
         }
         basketHandled = true;
@@ -178,15 +206,32 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
         break;
       }
       case 'searchProductPrices': {
-        const needId = a.needId;
-        if (!needId) { out.lines.push('על איזה מוצר לבדוק?'); break; }
-        const r = await svc.priceLookup(needId);
-        if (!r.rows.length) out.lines.push(r.failures.length ? `לא הצלחתי לקבל מחירים ל${r.concept.label} (${r.failures.join(', ')} לא זמינות כרגע).` : `לא מצאתי ${r.concept.label} ברשתות שלכם.`);
-        else {
-          out.lines.push(`${r.concept.emoji} הכי זול ${r.concept.label} כרגע: ${r.rows[0].provider} — ₪${r.rows[0].price}`);
-          out.components.push({ type: 'prices', title: r.concept.label, rows: r.rows, failures: r.failures });
-          out.components.push({ type: 'quick_replies', options: [{ label: `תוסיף ${r.concept.label}`, send: `תוסיף ${r.concept.label}` }] });
+        if (a.needId) {
+          const r = await svc.priceLookup(a.needId);
+          if (!r.rows.length) out.lines.push(r.failures.length ? `לא הצלחתי לקבל מחירים ל${r.concept.label} (${r.failures.join(', ')} לא זמינות כרגע).` : `לא מצאתי ${r.concept.label} ברשתות שלכם.`);
+          else {
+            out.lines.push(`${r.concept.emoji} הכי זול ${r.concept.label} כרגע: ${r.rows[0].name} ב${r.rows[0].provider} — ₪${r.rows[0].price}`);
+            out.components.push({ type: 'prices', title: r.concept.label, rows: r.rows, failures: r.failures });
+            out.components.push({ type: 'quick_replies', options: [{ label: `תוסיף ${r.concept.label}`, send: `#add ${a.needId}` }] });
+          }
+          break;
         }
+        // Free text ("תחפש לי חרדל") or a category ("איזה דג זול").
+        const q = a.query || 'מוצר';
+        const r = await svc.searchProducts(q);
+        const rows = [...r.results].sort((x, y) => (x.promoPrice ?? x.price) - (y.promoPrice ?? y.price)).slice(0, 6);
+        focusLabel = r.concept ? undefined : q;
+        if (r.concept) focusIds.push(r.concept.id);
+        if (!rows.length) {
+          out.lines.push(r.failures.length >= 2 ? `לא הצלחתי לבדוק כרגע (${r.failures.join(', ')} לא ענו).` : `לא מצאתי "${q}" ברשתות שלכם.`);
+          break;
+        }
+        out.lines.push(`${a.category || a.subGroup ? 'הכי זולים כרגע' : `מצאתי ${r.results.length} מוצרים ל"${q}"`} — המחיר לאריזה, אז שימו לב לגודל:`);
+        out.components.push({ type: 'prices', title: r.concept?.label ?? q, rows: rows.map((x) => ({ provider: x.providerName, name: productLine(x), price: x.promoPrice ?? x.price, promoText: x.promoText, source: x.source })), failures: r.failures });
+        out.components.push({ type: 'quick_replies', options: [
+          { label: r.concept ? `תוסיף ${r.concept.label}` : `תוסיף ${q} (הכי משתלם)`, send: r.concept ? `#add ${r.concept.id}` : `שים ${q}` },
+          { label: 'לבחור בעצמי', send: `@open:add:${q}` },
+        ] });
         break;
       }
       case 'searchPromotions': {
@@ -196,17 +241,26 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
           if (promos.length) {
             out.lines.push(`יש מבצע על ${r.concept.label}:`);
             out.components.push({ type: 'prices', title: r.concept.label, rows: promos, failures: r.failures });
-            out.components.push({ type: 'quick_replies', options: [{ label: 'תוסיף לסל', send: `תוסיף ${r.concept.label}` }] });
+            out.components.push({ type: 'quick_replies', options: [{ label: 'תוסיף לסל', send: `#add ${a.needId}` }] });
           } else if (r.rows.length) {
-            out.lines.push(`אין כרגע מבצע על ${r.concept.label}. הכי זול: ${r.rows[0].provider} — ₪${r.rows[0].price}.`);
+            out.lines.push(`אין כרגע מבצע על ${r.concept.label}. הכי זול: ${r.rows[0].name} ב${r.rows[0].provider} — ₪${r.rows[0].price}.`);
           } else out.lines.push(`לא הצלחתי לבדוק את ${r.concept.label} כרגע.`);
+        } else if (a.query) {
+          const r = await svc.searchProducts(a.query);
+          const promos = r.results.filter((x) => x.promoPrice || x.promoText).slice(0, 6);
+          focusLabel = a.query;
+          if (promos.length) {
+            out.lines.push(`יש מבצעים על "${a.query}":`);
+            out.components.push({ type: 'prices', title: a.query, rows: promos.map((x) => ({ provider: x.providerName, name: productLine(x), price: x.promoPrice ?? x.price, promoText: x.promoText, source: x.source })), failures: r.failures });
+          } else out.lines.push(r.results.length ? `אין כרגע מבצע על "${a.query}".` : `לא מצאתי "${a.query}" ברשתות שלכם.`);
         } else {
           const { deals, failures } = await svc.getDeals();
-          if (!deals.length) out.lines.push(failures.length ? 'לא הצלחתי למשוך מבצעים כרגע.' : 'אין כרגע מבצעים ששווים משהו בשבילכם.');
+          const list = a.stockUp ? deals.filter((d) => d.kind === 'stock') : deals;
+          if (!list.length) out.lines.push(failures.length ? 'לא הצלחתי למשוך מבצעים כרגע.' : a.stockUp ? 'אין כרגע מבצע ששווה להצטייד בו — אין מוצר עמיד שאתם קונים במחיר חריג.' : 'אין כרגע מבצעים ששווים משהו בשבילכם.');
           else {
-            out.lines.push('הנה מה שבאמת שווה בשבילכם:');
-            for (const d of deals.slice(0, 3)) out.components.push({ type: 'deal', deal: d });
-            out.components.push({ type: 'quick_replies', options: [{ label: 'לכל המבצעים', send: '@open:deals' }] });
+            out.lines.push(a.stockUp ? 'ששווה להצטייד בהם:' : 'הנה מה שבאמת שווה בשבילכם:');
+            for (const d of list.slice(0, 3)) out.components.push({ type: 'deal', deal: d });
+            out.components.push({ type: 'quick_replies', options: [{ label: `לכל המבצעים (${deals.length})`, send: '@open:deals' }] });
           }
         }
         break;
@@ -215,8 +269,31 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
         const b = store.basket();
         if (!b || b.status !== 'building' || !b.items.length) { out.lines.push('אין עדיין סל להשוות. לבנות אחד?'); out.components.push({ type: 'quick_replies', options: [{ label: 'בנה קנייה', send: '#build 14' }] }); break; }
         const cmp = await compareBasket(b);
-        out.lines.push(cmp.recommendation.text);
+        if (a.providerId) {
+          const q = cmp.quotes.find((x) => x.providerId === a.providerId);
+          const name = q?.providerName ?? providerName(a.providerId);
+          if (!q) out.lines.push(`${name} לא ברשימת הרשתות שלכם — אפשר להוסיף אותה במסך "הבית".`);
+          else if (!q.ok) out.lines.push(`לא הצלחתי לתמחר את הסל ב${name} כרגע${q.error ? ` (${q.error})` : ''}.`);
+          else {
+            const missing = q.lines.filter((l) => l.missing).length;
+            out.lines.push(`ב${name} הסל יוצא ~₪${Math.round(q.total)}${q.kind === 'online' ? ` כולל משלוח ${q.deliveryFeeEstimated ? '~' : ''}₪${q.deliveryFee}${q.deliveryFeeEstimated ? ' (הערכה)' : ''}` : ''}, ${Math.round(q.completeness * 100)}% מהסל${missing ? ` (חסרים ${missing})` : ''}.`);
+            const best = cmp.quotes.find((x) => x.providerId === cmp.recommendation.winnerId);
+            if (best && best.providerId !== q.providerId) out.lines.push(`לשם השוואה, ${best.providerName}: ~₪${Math.round(best.total)}.`);
+          }
+        } else out.lines.push(cmp.recommendation.text);
         out.components.push({ type: 'quick_replies', options: [{ label: 'לפירוט ההשוואה', send: '@open:compare' }, { label: 'קניתי — לאשר', send: '@open:confirm' }] });
+        saveContext({ lastIntent: 'compare', focusProviderId: a.providerId });
+        break;
+      }
+      case 'askInsight': {
+        out.lines.push(svc.insightAnswerFor(a.q, a.needId));
+        out.components.push({ type: 'quick_replies', options: [{ label: 'לכל התובנות', send: '@open:insights' }] });
+        break;
+      }
+      case 'clarify': {
+        out.lines.push(a.question);
+        const opts = a.options.length ? a.options : (store.basket()?.items ?? []).slice(0, 4).map((i) => ({ label: `${i.emoji} ${i.label}`, send: `${i.label}` }));
+        if (opts.length) out.components.push({ type: 'quick_replies', options: opts });
         break;
       }
       case 'explainDecision': {
@@ -271,6 +348,9 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
     out.components.push({ type: 'quick_replies', options: [{ label: 'פשוט תבנה', send: `#build ${pending.horizon} force` }] });
   }
 
+  // Remember what we just talked about, for "זה" / "אותו" / "תוסיף 2" next turn.
+  const lastNeed = focusIds[focusIds.length - 1];
+  if (lastNeed || focusLabel) saveContext({ focusNeedId: lastNeed, focusLabel, lastIntent: actions[actions.length - 1]?.type });
   if (out.changes.length) out.components.unshift({ type: 'state_change', changes: out.changes });
   if (!out.lines.length && out.changes.length) out.lines.push(pick(['רשמתי ✓', 'עודכן ✓', 'סגור ✓']));
   return { id: uid('m_'), role: 'assistant', text: out.lines.join('\n'), components: out.components, createdAt: nowIso() };

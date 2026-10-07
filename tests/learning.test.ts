@@ -89,10 +89,14 @@ test('restoring the usual product twice → strict; switching brands 3x → flex
   assert.equal(store.need('LAUNDRY_SOFTENER')!.flexibility, 'category_flexible');
 });
 
-test('repeated removals lower expected consumption', () => {
+test('"only this time" removals never change expected consumption; repeated real non-purchases do', () => {
   const t0 = store.need('TUNA')!.typical14DayQty;
   S.learnFromRemoval('TUNA', true);
   S.learnFromRemoval('TUNA', true);
+  S.learnFromRemoval('TUNA', true);
+  assert.equal(store.need('TUNA')!.typical14DayQty, t0, 'temporary removals keep habits');
+  assert.ok(store.need('TUNA')!.removedCount >= 3, 'but are counted so we can ask "stop adding it?"');
+  S.learnFromRemoval('TUNA', false);
   assert.ok(store.need('TUNA')!.typical14DayQty < t0);
 });
 

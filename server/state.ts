@@ -233,8 +233,9 @@ export function learnFromQuantity(needId: string, packs: number, horizonDays: nu
 /** Removed from a generated basket. Repeated removals reduce how much we expect them to use it. */
 export function learnFromRemoval(needId: string, temporary: boolean) {
   const n = ensureNeed(needId);
-  n.removedCount += 1;
-  if (n.removedCount >= 2 && n.qtySource !== 'user') {
+  n.removedCount += 1; // counted either way, so we can ask "להפסיק להכניס?" after repeated removals
+  // "רק הפעם" means this shop only — it must not change how much we think the household uses.
+  if (!temporary && n.removedCount >= 2 && n.qtySource !== 'user') {
     n.typical14DayQty = round1(Math.max(getConcept(needId).packSize * 0.25, n.typical14DayQty * 0.7));
     n.qtySource = 'learned';
   }

@@ -1,10 +1,12 @@
 // Rami Levy Online — public catalog API used by the website (no login for reading).
 // Ref: SuperMarketScraping/documentation/ramilevi_api.md (2026-05), rami-levy-mcp.
 import type { Address, DeliveryAvailability, ProductSearchResult } from '../../shared/types.ts';
+import { cleanBrand } from '../../shared/product.ts';
 import { nowIso } from '../clock.ts';
 import { kvGet, kvSet } from '../db.ts';
 import { httpFetch, num, type GroceryProvider } from './types.ts';
 import { sameCity } from './cities.ts';
+import { isoDay } from './transparency.ts';
 
 const BASE = 'https://www.rami-levy.co.il';
 const DEFAULT_STORE = 331;
@@ -14,7 +16,8 @@ type RLItem = {
   price?: { price: number };
   prop?: { by_kilo?: number };
   gs?: { BrandName?: string; Net_Content?: { text?: string } };
-  sale?: { scm?: number | string; name?: string; label?: string; is_club?: number; cmt?: number | string }[];
+  // scm = sale price for cmt units (cmt missing/1 = per unit). End-date field names are not in a saved response — read defensively.
+  sale?: { scm?: number | string; name?: string; label?: string; is_club?: number; cmt?: number | string; to?: string; end_date?: string; endDate?: string }[];
   available_in?: number[];
 };
 type RLStore = { id: string; name: string; city: string; internet_store_id: number | null; delivery: number };
@@ -23,11 +26,23 @@ export function parseRamiLevy(json: { data?: RLItem[] }, storeId: number): Produ
   const fetchedAt = nowIso();
   return (json.data ?? []).map((p) => {
     const regular = num(p.price?.price) ?? 0;
-    const sale = (p.sale ?? []).find((s) => !s.is_club && num(s.scm) && num(s.scm)! < regular);
+    // Best non-club sale, as a per-unit price: "2 ב-30" arrives as scm 30, cmt 2 → 15 each from 2 units.
+    let best: { per: number; minQty?: number; s: NonNullable<RLItem['sale']>[number] } | undefined;
+    for (const s of p.sale ?? []) {
+      const scm = num(s.scm);
+      if (s.is_club || !scm) continue;
+      const cmt = Math.round(num(s.cmt) ?? 1);
+      const per = Math.round((cmt > 1 ? scm / cmt : scm) * 100) / 100;
+      if (per < regular && (!best || per < best.per)) best = { per, minQty: cmt > 1 ? cmt : undefined, s };
+    }
+    const sale = best?.s;
+    const byWeight = !!p.prop?.by_kilo;
+    const size = p.gs?.Net_Content?.text?.trim();
     return {
-      providerId: 'ramilevy', productId: String(p.id), name: p.name, brand: p.gs?.BrandName,
-      price: regular, promoPrice: sale ? num(sale.scm) : undefined, promoText: sale ? (sale.name || sale.label || 'מבצע') : undefined,
-      sizeText: p.prop?.by_kilo ? 'לק"ג' : p.gs?.Net_Content?.text,
+      providerId: 'ramilevy', productId: String(p.id), name: p.name, brand: cleanBrand(p.gs?.BrandName),
+      price: regular, promoPrice: best?.per, promoMinQty: best?.minQty, promoText: sale ? (sale.name || sale.label || 'מבצע') : undefined,
+      promoEndsAt: sale ? isoDay(sale.to ?? sale.end_date ?? sale.endDate) : undefined,
+      sizeText: size || (byWeight ? 'לק"ג' : undefined), byWeight: byWeight || undefined,
       available: !p.available_in || p.available_in.includes(storeId),
       source: 'live' as const, fetchedAt,
     };

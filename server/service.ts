@@ -5,7 +5,12 @@ import { nowIso, uid } from './clock.ts';
 import { allConcepts, customConceptFor, ensureNeed, estimateStock, getConcept, learnFromQuantity, learnFromRemoval, learnFromReplacement, logEvent, updateNeed } from './state.ts';
 import { basketTotal, discoveryDeals, emptyPriceBook, evalCondition, generateBasket, householdDeals, toResolved, type PriceBook } from './engine/basket.ts';
 import { chooseProduct, cheaper, effPrice, fit, relevant } from './engine/match.ts';
-import { householdProviders, referenceBook, scanPrices } from './providers/index.ts';
+import { cachedSearch, householdProviders, onlineCatalog, referenceBook, scanPrices } from './providers/index.ts';
+import { withTimeout } from './providers/types.ts';
+import { identityGaps } from '../shared/product.ts';
+import { findConcepts, normalize } from './chat/parser.ts';
+import { recordScanSnapshots } from './snapshots.ts';
+import { buildInsights, answer as insightAnswer, type InsightsInput, type InsightQuestion } from './insights.ts';
 import { round1 } from './catalog.ts';
 import { currentJob as currentCartJob } from './cart/prepare.ts';
 
@@ -31,6 +36,16 @@ export async function scanForBasket(extraNeedIds: string[] = []): Promise<ScanRe
       full = { ...fb, failures: [...full.failures, ...fb.failures] };
     }
   }
+  try {
+    const chosen: { providerId: string; needId: string; product: ProductSearchResult }[] = [];
+    for (const [providerId, byNeed] of full.perProvider) for (const [needId, rows] of byNeed) {
+      const n = store.need(needId);
+      const ch = n ? chooseProduct(getConcept(needId), n, rows) : null;
+      if (ch && !ch.uncertain) chosen.push({ providerId, needId, product: ch.product });
+    }
+    recordScanSnapshots(chosen);
+  } catch { /* history is best-effort */ }
+  kvSet('lastFullBook', { byNeed: [...full.byNeed.entries()], perProvider: [...full.perProvider.entries()].map(([k, v]) => [k, [...v.entries()]]), failures: full.failures });
   return { book: referenceBook(full, h), failures: full.failures };
 }
 
@@ -83,7 +98,46 @@ function requireBasket(): Basket {
 
 // ---------- basket edits (each emits a learning event) ----------
 
-export async function addItem(opts: { needId?: string; newLabel?: string; quantity?: number; conditional?: 'good_price' }): Promise<{ item: BasketItem; basket: Basket }> {
+// ---------- product search (manual add + chat "תחפש לי X") ----------
+
+export type SearchCard = ProductSearchResult & { providerName: string; ambiguous: boolean };
+const searchCache = new Map<string, ProductSearchResult>(); // "provider|product" → the exact row the user saw
+
+/** Free-text search across the household's chains (and branch price files). Real rows only, deduped, relevance first. */
+export async function searchProducts(q: string): Promise<{ query: string; concept?: { id: string; label: string; emoji: string }; results: SearchCard[]; failures: string[] }> {
+  const text = q.trim();
+  if (text.length < 2) return { query: text, results: [], failures: [] };
+  const mention = findConcepts(text)[0];
+  const concept = mention && normalize(mention.concept.label).length >= normalize(text).length - 3 ? mention.concept : undefined;
+  const h = store.household();
+  let providers = householdProviders(h, { physical: true });
+  if (!providers.length) providers = onlineCatalog();
+  const query = concept ? concept.query : text;
+  const failures: string[] = [];
+  const rows = (await Promise.all(providers.map(async (p) => {
+    try { return { p, rows: await withTimeout(cachedSearch(p, query, concept?.id), 20000, p.name) }; } catch { failures.push(p.name); return { p, rows: [] as ProductSearchResult[] }; }
+  }))).flatMap(({ p, rows }) => rows.map((r) => ({ ...r, providerName: p.name })));
+  const need = concept ? ensureNeed(concept.id) : null;
+  const head = normalize(text).split(' ').sort((a, b) => b.length - a.length)[0];
+  const ok = rows.filter((r) => r.available && r.price > 0 && (concept ? relevant(concept, need, r) : normalize(`${r.name} ${r.brand ?? ''}`).includes(head)));
+  const seen = new Set<string>();
+  const results: SearchCard[] = [];
+  for (const r of ok.sort((a, b) => (concept ? fit(concept, b) - fit(concept, a) : 0) || cheaper(a, b))) {
+    const k = `${r.providerId}|${r.productId}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    searchCache.set(k, r);
+    results.push({ ...r, ambiguous: identityGaps(r).ambiguous });
+    if (results.length >= 30) break;
+  }
+  return { query: text, concept: concept ? { id: concept.id, label: concept.label, emoji: concept.emoji } : undefined, results, failures };
+}
+
+/** The exact row behind a search/deal card, if we've seen it. */
+export const seenProduct = (providerId: string, productId: string) => searchCache.get(`${providerId}|${productId}`);
+export function rememberProducts(rows: ProductSearchResult[]) { for (const r of rows) searchCache.set(`${r.providerId}|${r.productId}`, r); }
+
+export async function addItem(opts: { needId?: string; newLabel?: string; quantity?: number; conditional?: 'good_price'; product?: { providerId: string; productId: string } }): Promise<{ item: BasketItem; basket: Basket }> {
   let needId = opts.needId;
   if (!needId && opts.newLabel) needId = customConceptFor(opts.newLabel).id;
   if (!needId) throw new Error('missing item');
@@ -110,7 +164,14 @@ export async function addItem(opts: { needId?: string; newLabel?: string; quanti
   item.accepted = true;
   item.source = 'user_request';
   item.lockedByUser = false;
-  if (choice) item.product = toResolved(choice.product);
+  const exact = opts.product ? seenProduct(opts.product.providerId, opts.product.productId) : undefined;
+  if (exact) {
+    // The user picked this exact product (search / deal card) — keep it, and remember the brand they chose.
+    item.product = toResolved(exact);
+    item.lockedByUser = true;
+    item.uncertain = false;
+    item.reason = 'בחרתם את המוצר הזה';
+  } else if (choice) item.product = toResolved(choice.product);
   if (opts.conditional) {
     item.condition = evalCondition(need, choice?.product);
     item.reason = item.condition?.met ? `ביקשתם אם יש מחיר טוב — ${item.condition.note}` : `ביקשתם רק אם המחיר טוב — ${item.condition?.note}`;
@@ -226,6 +287,7 @@ export async function getDeals(): Promise<{ deals: Deal[]; failures: PriceBook['
   }
   const dismissed = new Set(kvGet<string[]>('dismissedDealIds') ?? []);
   const deals = householdDeals(book).filter((d) => !dismissed.has(d.id));
+  kvSet('lastDeals', deals);
   const all = [...book.byNeed.values()].flat();
   const names = Object.fromEntries(householdProviders(store.household(), { physical: true }).map((p) => [p.id, p.name]));
   return { deals, failures, demo: all.some((r) => r.source === 'demo'), providers: names };
@@ -267,6 +329,12 @@ export type ConfirmInput = { storeName: string; providerId?: string; total?: num
 export function confirmPurchase(input: ConfirmInput): Purchase {
   const basket = store.basket();
   const items: Purchase['items'] = [];
+  // The comparison on screen when buying — the only basis for "measured" savings later.
+  const cmp = store.comparison();
+  const fresh = !!(cmp && basket && cmp.basketKey === basketKey(basket));
+  const chosen = cmp?.quotes.find((q) => q.ok && q.providerId === input.providerId);
+  const nextBest = chosen ? cmp!.quotes.filter((q) => q.ok && q.providerId !== chosen.providerId && q.kind === chosen.kind).sort((a, b) => a.total - b.total)[0] : undefined;
+  const book = lastBook();
   for (const row of input.items.filter((r) => r.quantity > 0)) {
     const c = getConcept(row.needId);
     const n = ensureNeed(row.needId);
@@ -284,7 +352,17 @@ export function confirmPurchase(input: ConfirmInput): Purchase {
     // Bought a different amount than suggested → learn
     if (bi && bi.quantity !== row.quantity && bi.status !== 'discovery') learnFromQuantity(row.needId, row.quantity, basket?.horizonDays ?? 14);
     store.saveNeed(n);
-    items.push({ needId: row.needId, label: c.label, emoji: c.emoji, quantity: row.quantity, unit: c.packLabel, productName: row.productName, price: row.price, status: bi?.status ?? 'need' });
+    const line = chosen?.lines.find((l) => l.needId === row.needId && !l.missing);
+    const prod = line?.product ?? (bi?.product?.providerId === input.providerId ? bi!.product : undefined);
+    const promoUsed = !!line?.product?.promoPrice && (!line.product.promoMinQty || row.quantity >= line.product.promoMinQty);
+    const usual = bi?.usualProductName ? (book.byNeed.get(row.needId) ?? []).find((r) => r.name === bi.usualProductName) : undefined;
+    items.push({
+      needId: row.needId, label: c.label, emoji: c.emoji, quantity: row.quantity, unit: c.packLabel, productName: row.productName, price: row.price, status: bi?.status ?? 'need',
+      brand: prod?.brand, sizeText: prod?.sizeText, providerId: input.providerId, productId: prod?.productId,
+      regularPrice: promoUsed ? line!.product!.price : undefined, promoMinQty: promoUsed ? line!.product!.promoMinQty : undefined, promoEndsAt: promoUsed ? line!.product!.promoEndsAt : undefined,
+      usualProductName: usual ? usual.name : undefined, usualPrice: usual ? effPrice(usual) : undefined,
+      stockBefore: est.known ? est.qty : undefined,
+    });
   }
   // Items we suggested but they chose not to buy count as a soft removal — but not when it wasn't their choice:
   // an unmet "only if cheap" condition, or an item the store didn't have / we couldn't match safely.
@@ -302,6 +380,13 @@ export function confirmPurchase(input: ConfirmInput): Purchase {
     removed: (basket?.items ?? []).filter((bi) => bi.accepted && bi.condition?.met !== false && !items.some((x) => x.needId === bi.needId)).map((bi) => ({ needId: bi.needId, label: bi.label })),
     stockUps: items.filter((i) => i.status === 'opportunity').map((i) => i.label),
     viaCart: input.viaCart || undefined,
+    deliveryFee: chosen?.kind === 'online' ? chosen.deliveryFee : undefined,
+    deliveryFeeEstimated: chosen?.kind === 'online' ? chosen.deliveryFeeEstimated !== false : undefined,
+    priceSource: chosen?.source ?? (basket?.items.some((i) => i.product && !i.product.live) ? 'estimate' : basket?.items.some((i) => i.product?.live) ? 'live' : undefined),
+    atPurchase: chosen ? {
+      fresh, chosenTotal: chosen.total, chosenCompleteness: chosen.completeness,
+      nextBest: nextBest ? { providerId: nextBest.providerId, providerName: nextBest.providerName, total: nextBest.total, completeness: nextBest.completeness } : undefined,
+    } : undefined,
   };
   store.savePurchase(purchase);
   logEvent({ type: 'purchase_confirmed', value: { purchaseId: purchase.id, items: items.length, total: purchase.total } });
@@ -311,6 +396,23 @@ export function confirmPurchase(input: ConfirmInput): Purchase {
   kvSet('cartJob', null);
   void import('./cart/prepare.ts').then((m) => m.clearJob());
   return purchase;
+}
+
+// ---------- household insights ----------
+
+export function insightsInput(): InsightsInput {
+  const now = new Date(nowIso());
+  const from = new Date(now.getTime() - 130 * 86400000).toISOString().slice(0, 10);
+  const delivery = Object.values(kvGet<Record<string, import('../shared/types.ts').ProviderDelivery>>('providerDelivery') ?? {});
+  return {
+    now, purchases: store.purchases(), needs: store.needs(), events: store.events(undefined, 3000), snapshots: store.snapshots(from),
+    deals: kvGet<Deal[]>('lastDeals') ?? [], delivery, concept: getConcept, shopEveryDays: store.household()?.shopEveryDays ?? 14,
+  };
+}
+export const insights = () => buildInsights(insightsInput());
+export function insightAnswerFor(q: InsightQuestion, needId?: string) {
+  const input = insightsInput();
+  return insightAnswer(q, buildInsights(input), input, needId);
 }
 
 export function basketSummary(b: Basket) {

@@ -160,7 +160,12 @@ app.post('/api/basket/:needId/replace', wrap((req) => {
   return { state: appState(), replacements: r.replacements };
 }));
 app.get('/api/basket/:needId/why', wrap((req) => ({ text: explainItem(String(req.params.needId), store.basket()) })));
-app.post('/api/basket/add', wrap(async (req) => { await svc.addItem(req.body); return appState(); }));
+app.post('/api/basket/add', wrap(async (req) => {
+  const b = req.body ?? {};
+  await svc.addItem({ needId: b.needId, newLabel: b.newLabel ? String(b.newLabel).slice(0, 40) : undefined, quantity: b.quantity !== undefined ? Number(b.quantity) : undefined, conditional: b.conditional, product: b.product });
+  return appState();
+}));
+app.get('/api/products/search', wrap(async (req) => svc.searchProducts(String(req.query.q ?? '').slice(0, 60))));
 
 // ---------- needs / preferences ----------
 

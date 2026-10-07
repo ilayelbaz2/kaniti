@@ -2,10 +2,12 @@
 // (Victory, Yenot Bitan, Carrefour, Tiv Taam, Keshet Teamim, Quik). Public JSON, no login for reading.
 // Ref: SuperMarketScraping/documentation/{victory,keshet,ybitan}_api.md, supermeskill (2026).
 import type { Address, DeliveryAvailability, ProductSearchResult } from '../../shared/types.ts';
+import { cleanBrand } from '../../shared/product.ts';
 import { nowIso } from '../clock.ts';
 import { kvGet, kvSet } from '../db.ts';
 import { httpFetch, num, type GroceryProvider } from './types.ts';
 import { sameCity } from './cities.ts';
+import { isoDay, normUnit, sizeOf } from './transparency.ts';
 
 type ZuzChain = { id: string; name: string; host: string; retailerId: number; defaultBranch: number; fee: number; minOrder: number };
 
@@ -25,7 +27,8 @@ type ZProduct = {
   unitOfMeasure?: { names?: Record<string, string> };
   branch?: {
     regularPrice?: number; salePrice?: number | null; isOutOfStock?: boolean; isActive?: boolean; isVisible?: boolean;
-    specials?: { names?: Record<string, { name?: string }>; description?: string; firstLevel?: { type?: number; firstPurchaseTotal?: number; firstGift?: { total?: number } } }[];
+    // endDate/toDate: not in a saved response — read defensively, absent = unknown.
+    specials?: { names?: Record<string, { name?: string }>; description?: string; endDate?: string | number; toDate?: string | number; firstLevel?: { type?: number; firstPurchaseTotal?: number; firstGift?: { total?: number } } }[];
   };
 };
 
@@ -42,19 +45,25 @@ export function parseZuz(providerId: string, json: { products?: ZProduct[] }): P
     let promoPrice = num(b.salePrice) && num(b.salePrice)! < regular ? num(b.salePrice) : undefined;
     let promoText: string | undefined;
     let promoMinQty: number | undefined;
+    let promoEndsAt: string | undefined;
     for (const s of b.specials ?? []) {
       const desc = s.names?.['1']?.name ?? s.description;
+      const ends = isoDay(s.endDate ?? s.toDate);
+      // type 2 = "N for X": firstPurchaseTotal units for firstGift.total ₪. Other types are not decoded (no verified sample).
       if (s.firstLevel?.type === 2 && s.firstLevel.firstPurchaseTotal && s.firstLevel.firstGift?.total) {
         const per = s.firstLevel.firstGift.total / s.firstLevel.firstPurchaseTotal;
-        if (per < regular && (!promoPrice || per < promoPrice)) { promoPrice = Math.round(per * 100) / 100; promoMinQty = s.firstLevel.firstPurchaseTotal; promoText = desc; }
-      } else if (!promoText && desc && promoPrice) promoText = desc;
+        if (per < regular && (!promoPrice || per < promoPrice)) { promoPrice = Math.round(per * 100) / 100; promoMinQty = s.firstLevel.firstPurchaseTotal; promoText = desc; promoEndsAt = ends; }
+      } else if (!promoText && desc && promoPrice) { promoText = desc; promoEndsAt = ends; }
     }
-    const name = p.localName ?? p.names?.['1']?.long ?? p.names?.['1']?.short ?? '';
-    const unit = p.unitOfMeasure?.names?.['1'];
+    // localName is cut at 20 characters in real responses ("פסטה מריה  פסטה ביצי") — the long name is the full one.
+    const name = (p.names?.['1']?.long || p.names?.['1']?.short || p.localName || '').replace(/\s+/g, ' ').trim();
+    const byWeight = !!p.isWeighable;
+    const unit = p.unitOfMeasure?.names?.['1']?.trim();
     return {
-      providerId, productId: String(p.id ?? p.productId), name, brand: p.brand?.names?.['1'],
-      price: regular, promoPrice, promoMinQty, promoText: promoText ?? (promoPrice ? 'מבצע' : undefined),
-      sizeText: p.isWeighable ? 'לק"ג' : p.weight && unit ? `${p.weight} ${unit}` : undefined,
+      providerId, productId: String(p.id ?? p.productId), name, brand: cleanBrand(p.brand?.names?.['1']),
+      price: regular, promoPrice, promoMinQty, promoText: promoText ?? (promoPrice ? 'מבצע' : undefined), promoEndsAt: promoPrice ? promoEndsAt : undefined,
+      sizeText: sizeOf(p.weight, unit) ?? (num(p.weight) && unit && !normUnit(unit) && !/^[\d.\s]+$/.test(unit) ? `${num(p.weight)} ${unit}` : undefined) ?? (byWeight ? 'לק"ג' : undefined),
+      byWeight: byWeight || undefined,
       available: !b.isOutOfStock && b.isActive !== false,
       source: 'live' as const, fetchedAt,
     };

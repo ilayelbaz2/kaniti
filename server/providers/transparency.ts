@@ -6,6 +6,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { XMLParser } from 'fast-xml-parser';
 import type { DeliveryAvailability, ProductSearchResult } from '../../shared/types.ts';
+import { cleanBrand } from '../../shared/product.ts';
 import { nowIso } from '../clock.ts';
 import { httpFetch, type GroceryProvider } from './types.ts';
 
@@ -20,7 +21,12 @@ export const PHYSICAL_CHAINS: PhysicalChain[] = [
   { id: 'keshet', name: 'קשת טעמים', kind: 'cerberus', user: 'Keshet' },
 ];
 
-export type BranchItem = { code: string; name: string; maker?: string; price: number; promoPrice?: number; promoText?: string; promoMinQty?: number };
+export type BranchItem = {
+  code: string; name: string; maker?: string; price: number; promoPrice?: number; promoText?: string; promoMinQty?: number;
+  sizeText?: string; byWeight?: boolean; promoEndsAt?: string;
+};
+/** A promotion resolved to a per-unit price for one item code. */
+export type PromoDeal = { price: number; minQty: number; text: string; endsAt?: string };
 export type StoreInfo = { storeId: string; name: string; city: string; address?: string };
 
 const CACHE_DIR = path.resolve(process.env.KANITI_CACHE ?? 'data/cache');
@@ -55,6 +61,43 @@ function* walk(node: unknown, keys: string[]): Generator<Obj> {
 const str = (v: unknown) => (v === undefined || v === null ? '' : String(v).trim());
 const fl = (v: unknown) => { const n = parseFloat(str(v)); return Number.isFinite(n) ? n : 0; };
 
+// ---------- small normalisers (also used by the online parsers) ----------
+
+/** Unit names as the feeds/APIs spell them → one display spelling. Unknown or numeric junk → undefined. */
+export function normUnit(u: unknown): string | undefined {
+  const t = str(u).replace(/["'׳״`]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!t) return undefined;
+  if (/^(גרם|גרמים|גר|ג|g|gr|gram|grams)$/.test(t)) return 'גרם';
+  if (/^(מל|מ ל|מיליליטר|מיליליטרים|מילי ליטר|ml)$/.test(t)) return 'מ״ל';
+  if (/^(ליטר|ליטרים|ל|l|lt|ltr|liter|litre)$/.test(t)) return 'ליטר';
+  if (/^(קג|ק ג|קילו|קילוגרם|קילוגרמים|kg)$/.test(t)) return 'ק"ג';
+  if (/^(יחידה|יחידות|יח|unit|units|pc|pcs)$/.test(t)) return 'יח׳';
+  if (/^(מטר|מטרים|זוג|זוגות|כביסות|טבליות|גלילים|שקיות|קפסולות)$/.test(t)) return t;
+  return undefined;
+}
+
+/** "500 גרם" from quantity + unit; a single unit ("1 יח׳") says nothing and is dropped. */
+export function sizeOf(qty: unknown, unit: unknown): string | undefined {
+  const q = fl(qty);
+  const u = normUnit(unit);
+  if (!(q > 0) || !u) return undefined;
+  if (u === 'יח׳' && q === 1) return undefined;
+  return `${Math.round(q * 1000) / 1000} ${u}`;
+}
+
+const dayIn = (d: Date) => (Number.isNaN(d.getTime()) ? undefined : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem' }).format(d));
+/** Any date the sources publish → local (Israel) YYYY-MM-DD. Unparseable → undefined. */
+export function isoDay(v: unknown): string | undefined {
+  if (typeof v === 'number') return v > 0 ? dayIn(new Date(v)) : undefined;
+  const t = str(v);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d.*(Z|[+-]\d{2}:?\d{2})$/.test(t)) return dayIn(new Date(t));
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10); // local wall-clock time, no zone
+  const m = t.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  return undefined;
+}
+
 export function parsePriceFull(xml: string): BranchItem[] {
   const doc = parser.parse(xml);
   const out: BranchItem[] = [];
@@ -63,31 +106,67 @@ export function parsePriceFull(xml: string): BranchItem[] {
     const price = fl(o.itemprice);
     const name = str(o.itemname) || str(o.manufactureritemdescription) || str(o.manufactureitemdescription);
     if (!(price > 0) || !name) continue;
-    out.push({ code: str(o.itemcode), name, maker: str(o.manufacturername) || str(o.manufacturename) || undefined, price });
+    // Real feeds spell the flag bIsWeighted or blsWeighted (lower-case L). Weighted items are priced per kg.
+    const byWeight = str(o.bisweighted ?? o.blsweighted) === '1';
+    // Pack size = Quantity + UnitQty ("500" + "גרם"). UnitOfMeasure is the comparison base ("100 גרם", or junk like
+    // "100.00" in Super-Pharm) — only its unit word is a fallback.
+    const sizeText = byWeight ? undefined : sizeOf(o.quantity, o.unitqty) ?? sizeOf(o.quantity, str(o.unitofmeasure).replace(/^[\d.,\s]+/, ''));
+    const maker = cleanBrand(str(o.manufacturername) || str(o.manufacturename));
+    out.push({ code: str(o.itemcode), name, maker, price, ...(sizeText ? { sizeText } : {}), ...(byWeight ? { byWeight } : {}) });
   }
   return out;
 }
 
-export function parsePromoFull(xml: string): Map<string, { price: number; minQty: number; text: string }> {
+/** Promotions per item code, as a per-unit price.
+ *  RewardType 1 (price for MinQty units) is read directly. "Buy N, get some free/discounted" promotions are relative to
+ *  the shelf price, so they need `prices` (item code → regular price) and are skipped without it:
+ *   - RewardType 7: MinQty includes AdditionalGiftCount free units of the same group ("2+1": MinQty 3, gift 1).
+ *   - RewardType 9: the cheapest of MinQty units gets DiscountRate (1/100 %) off ("2+1 הזול": 3, 10000; "השני בחצי": 2, 5000).
+ *  Verified against the real Rami Levy PromoFull fixture. RewardType 2 percent discounts there are all credit-card/club
+ *  or coupons, 3 is an amount-off coupon, 6 needs a minimum basket — none are applied. */
+export function parsePromoFull(xml: string, prices?: Map<string, number>, day = today()): Map<string, PromoDeal> {
   const doc = parser.parse(xml);
-  const map = new Map<string, { price: number; minQty: number; text: string }>();
+  const map = new Map<string, PromoDeal>();
   for (const o of walk(doc, ['promotionid'])) {
     const clubs = o.clubs as Obj | undefined;
     const club = str(o.clubid ?? (clubs && typeof clubs === 'object' ? lc(clubs).clubid : ''));
     if (club && !/^0\b|כלל/.test(club)) continue; // members-only promotions are not for everyone
-    const end = str(o.promotionenddate || o.promotionenddatetime).slice(0, 10);
-    if (end && end < today()) continue;
+    const restr = o.additionalrestrictions && typeof o.additionalrestrictions === 'object' ? lc(o.additionalrestrictions as Obj) : {};
     const text = str(o.promotiondescription);
+    if (str(o.additionaliscoupon ?? restr.additionaliscoupon) === '1' || /קופון/.test(text)) continue; // needs a coupon
+    const endsAt = isoDay(o.promotionenddate || o.promotionenddatetime);
+    if (endsAt && endsAt < day) continue;
+    const startsAt = isoDay(o.promotionstartdate || o.promotionstartdatetime);
+    if (startsAt && startsAt > day) continue;
+    const reward = str(o.rewardtype);
+    const minQtyP = Math.round(fl(o.minqty));
+    // Relative promotions → a factor on the shelf price of each item.
+    let factor = 0;
+    if (prices && str(o.isweightedpromo) !== '1' && minQtyP >= 2 && minQtyP <= 10) {
+      const rate = fl(o.discountrate) / 10000;
+      const gift = Math.round(fl(o.additionalgiftcount ?? restr.additionalgiftcount));
+      if (reward === '9' && /^0?$/.test(str(o.discounttype)) && rate > 0 && rate <= 1) factor = (minQtyP - rate) / minQtyP;
+      else if (reward === '7' && gift >= 1 && gift < minQtyP) factor = (minQtyP - gift) / minQtyP;
+    }
+    const items = [...walk(o.promotionitems ?? o.groups, ['itemcode'])];
+    if (factor && items.some((it) => str(it.isgiftitem) === '1')) factor = 0; // the free unit is a different product
     // Cerberus puts the price on the promotion; Shufersal on each PromotionItem (inside Groups).
-    for (const it of walk(o.promotionitems ?? o.groups, ['itemcode'])) {
-      // DiscountedPrice = price for MinQty units. (DiscountedPricePerMida is per unit of *measure*, e.g. per 100g — not usable.)
-      const minQty = Math.max(1, Math.round(fl(it.minqty ?? o.minqty)));
-      const total = fl(it.discountedprice ?? o.discountedprice);
-      const perUnit = total > 0 ? total / minQty : 0;
-      if (!(perUnit > 0)) continue;
+    for (const it of items) {
       const code = str(it.itemcode);
+      let minQty: number, perUnit: number;
+      if (factor) {
+        minQty = minQtyP;
+        perUnit = (prices!.get(code) ?? 0) * factor;
+      } else {
+        // DiscountedPrice = price for MinQty units. (DiscountedPricePerMida is per unit of *measure*, e.g. per 100g — not usable.)
+        minQty = Math.max(1, Math.round(fl(it.minqty ?? o.minqty)));
+        const total = fl(it.discountedprice ?? o.discountedprice);
+        perUnit = total > 0 ? total / minQty : 0;
+      }
+      if (!(perUnit > 0)) continue;
       const prev = map.get(code);
-      if (!prev || perUnit < prev.price) map.set(code, { price: Math.round(perUnit * 100) / 100, minQty, text });
+      const price = Math.round(perUnit * 100) / 100;
+      if (!prev || price < prev.price) map.set(code, { price, minQty, text, ...(endsAt ? { endsAt } : {}) });
     }
   }
   return map;
@@ -227,18 +306,37 @@ export async function loadBranch(chain: PhysicalChain, storeId: string): Promise
     if (pr) promoXml = decodeXml(await c.download(pr));
   }
   const items = parsePriceFull(priceXml);
-  const promos = promoXml ? parsePromoFull(promoXml) : new Map();
-  for (const it of items) {
-    const p = promos.get(it.code);
-    // Sanity: ignore "promos" deeper than 70% — in the feeds those are coupons, gifts or unit-of-measure artefacts.
-    if (p && p.price < it.price && p.price >= it.price * 0.3) { it.promoPrice = p.price; it.promoText = p.text; it.promoMinQty = p.minQty; }
-  }
+  const promos = promoXml ? parsePromoFull(promoXml, new Map(items.map((it) => [it.code, it.price]))) : new Map<string, PromoDeal>();
+  applyPromos(items, promos);
   const data: BranchData = { items, fileDate: nowIso(), files: used, promoCount: promos.size };
   fs.mkdirSync(CACHE_DIR, { recursive: true });
   // drop older caches for this store
   for (const f of fs.readdirSync(CACHE_DIR)) if (f.startsWith(`${chain.id}-${storeId}-`) && f !== path.basename(cacheFile)) fs.rmSync(path.join(CACHE_DIR, f));
   fs.writeFileSync(cacheFile, JSON.stringify(data));
   return data;
+}
+
+/** Attaches each item's best promotion. */
+export function applyPromos(items: BranchItem[], promos: Map<string, PromoDeal>): BranchItem[] {
+  for (const it of items) {
+    const p = promos.get(it.code);
+    // Sanity: ignore "promos" deeper than 70% — in the feeds those are coupons, gifts or unit-of-measure artefacts.
+    if (p && p.price < it.price && p.price >= it.price * 0.3) {
+      it.promoPrice = p.price; it.promoText = p.text; it.promoMinQty = p.minQty;
+      if (p.endsAt) it.promoEndsAt = p.endsAt;
+    }
+  }
+  return items;
+}
+
+/** What a physical branch search returns for one price-file item. */
+export function branchResult(providerId: string, it: BranchItem, fetchedAt: string): ProductSearchResult {
+  return {
+    providerId, productId: it.code, name: it.name, brand: cleanBrand(it.maker), price: it.price, promoPrice: it.promoPrice,
+    promoText: it.promoText, promoMinQty: it.promoMinQty, promoEndsAt: it.promoPrice ? it.promoEndsAt : undefined,
+    sizeText: it.sizeText, byWeight: it.byWeight || undefined,
+    available: true, source: 'branch_data' as const, fetchedAt,
+  };
 }
 
 const norm = (s: string) => s.replace(/["'׳״\-]/g, '').replace(/\s+/g, ' ').trim();
@@ -266,10 +364,7 @@ export function physicalProvider(chain: PhysicalChain, storeId: string, storeNam
     },
     async searchProducts(query): Promise<ProductSearchResult[]> {
       const { items, fileDate } = await loadBranch(chain, storeId);
-      return searchBranch(items, query).map((it) => ({
-        providerId: id, productId: it.code, name: it.name, brand: it.maker, price: it.price, promoPrice: it.promoPrice,
-        promoText: it.promoText, promoMinQty: it.promoMinQty, available: true, source: 'branch_data' as const, fetchedAt: fileDate,
-      }));
+      return searchBranch(items, query).map((it) => branchResult(id, it, fileDate));
     },
   };
 }

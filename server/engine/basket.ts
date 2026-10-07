@@ -282,8 +282,8 @@ function item(n: HouseholdNeed, c: Concept, qty: number, status: BasketItem['sta
 
 export function toResolved(p: ProductSearchResult) {
   return {
-    providerId: p.providerId, productId: p.productId, name: p.name, brand: p.brand, price: effPrice(p), regularPrice: p.price,
-    unitPriceText: p.unitPriceText, promoText: p.promoText, live: p.source === 'live',
+    providerId: p.providerId, productId: p.productId, name: p.name, brand: p.brand, sizeText: p.sizeText, byWeight: p.byWeight, price: effPrice(p), regularPrice: p.price,
+    unitPriceText: p.unitPriceText, promoText: p.promoText, promoMinQty: p.promoMinQty, promoEndsAt: p.promoEndsAt, live: p.source === 'live',
   };
 }
 

@@ -9,6 +9,7 @@ import { chooseProduct, effPrice } from './match.ts';
 import { cartSupported } from '../cart/drivers.ts';
 import { basketKey } from '../service.ts';
 import { verifiedDelivery } from '../cart/delivery.ts';
+import { recordQuoteSnapshots } from '../snapshots.ts';
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -86,6 +87,7 @@ export async function compareBasket(basket: Basket): Promise<Comparison> {
     quotes: ordered, recommendation,
   };
   store.saveComparison(comparison);
+  try { recordQuoteSnapshots(ordered); } catch { /* history is best-effort */ }
   return comparison;
 }
 
