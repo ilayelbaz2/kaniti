@@ -208,3 +208,63 @@ test('ranking: a chain whose site refused the address is never recommended', () 
   recordDelivery({ providerId: 'x', deliveryStatus: 'confirmed', source: 'provider_page', checkedAt: new Date(Date.now() - 20 * 86400000).toISOString(), addressKey: 'רמת גן|ביאליק 12' });
   assert.equal(verifiedDelivery('x', HOME), undefined, 'results older than two weeks are not trusted');
 });
+
+// ---------- ZuZ sites: real response shapes from tivtaam.co.il (Oct 2026) ----------
+const { fromZuz } = await import('../server/cart/delivery.ts');
+type ZuzRaw = import('../server/cart/delivery.ts').ZuzRaw;
+const LOOKUP_OK = {
+  status: 200, areas: [{ id: 2450, name: 'רמת גן מרכז', branchId: 924, price: 29.9, min: null }],
+  components: [{ name: '12', types: ['street_number'] }, { name: 'ביאליק', types: ['route'] }, { name: 'רמת גן', types: ['locality', 'political'] }],
+};
+const SLOTS = [{ from: '2026-10-10T12:30:00.000Z', to: '2026-10-10T14:30:00.000Z', price: 29.9 }, { from: '2026-10-11T13:00:00.000Z', to: '2026-10-11T15:00:00.000Z', price: 29.9 }];
+const zuz = (raw: Partial<ZuzRaw>, opts = {}) => assessDelivery('tivtaam', fromZuz({ query: 'ביאליק 12, רמת גן', minOrder: 300, lookup: LOOKUP_OK, ...raw } as ZuzRaw), HOME, opts);
+
+test('ZuZ: cart area = the area the site resolves for the household address → confirmed with the site fee, slots, minimum', () => {
+  const d = zuz({ cartArea: { id: 2450, name: 'רמת גן מרכז', deliveryTypeId: 1, fee: 29.9 }, slots: SLOTS }, { cartTotal: 320 });
+  assert.equal(d.deliveryStatus, 'confirmed');
+  assert.equal(d.confirmedAddressText, 'ביאליק 12, רמת גן');
+  assert.equal(d.deliveryFee, 29.9);
+  assert.equal(d.minimumOrder, 300);
+  assert.equal(d.deliveryWindows?.length, 2);
+  assert.match(d.deliveryWindows![0], /15:30–17:30/, 'slot times shown in Israel time');
+});
+
+test('ZuZ: cart set to another area, to pickup, or to no area → user action required (never confirmed)', () => {
+  const other = zuz({ cartArea: { id: 10006, name: 'רמת גן', deliveryTypeId: 1, fee: 29.9 }, slots: SLOTS });
+  assert.equal(other.deliveryStatus, 'user_action_required');
+  assert.match(other.restrictionMessage!, /משויכת לאזור "רמת גן".*"רמת גן מרכז"/);
+  assert.equal(zuz({ cartArea: { id: 1079, name: 'איסוף', deliveryTypeId: 2 } }).deliveryStatus, 'user_action_required');
+  const none = zuz({ cartArea: null });
+  assert.equal(none.deliveryStatus, 'user_action_required');
+  assert.match(none.restrictionMessage!, /עוד לא משויכת/);
+});
+
+test('ZuZ: the site says the address is outside its delivery areas → unavailable; unknown address → user action', () => {
+  const out = zuz({ query: 'ביאליק 12, רמת גן', lookup: { status: 404, error: 'Area not found', areas: [], components: [] }, cartArea: null });
+  assert.equal(out.deliveryStatus, 'unavailable');
+  assert.equal(out.confirmedAddressText, 'ביאליק 12, רמת גן');
+  const bad = zuz({ lookup: { status: 400, error: 'Address not found', areas: [], components: [] } });
+  assert.equal(bad.deliveryStatus, 'user_action_required');
+});
+
+test('ZuZ: geocoder snapped to a different street → not the household address → user action', () => {
+  const lookup = { ...LOOKUP_OK, components: [{ name: '12', types: ['street_number'] }, { name: 'ז׳בוטינסקי', types: ['route'] }, { name: 'רמת גן', types: ['locality'] }] };
+  assert.equal(zuz({ lookup, cartArea: { id: 2450, name: 'רמת גן מרכז', deliveryTypeId: 1 }, slots: SLOTS }).deliveryStatus, 'user_action_required');
+});
+
+test('ZuZ: no free slots → address accepted (confirmed) but the restriction says so; cart delivery line wins over area price', () => {
+  const d = zuz({ cartArea: { id: 2450, name: 'רמת גן מרכז', deliveryTypeId: 1, fee: 29.9 }, slots: [], cartDeliveryCost: 19.9 });
+  assert.equal(d.deliveryStatus, 'confirmed');
+  assert.match(d.restrictionMessage!, /אין כרגע חלונות משלוח/);
+  assert.equal(d.deliveryFee, 19.9);
+  assert.equal(d.deliveryWindows, undefined);
+});
+
+test('ZuZ: minimum order from the site against the real cart total', () => {
+  const d = zuz({ cartArea: { id: 2450, name: 'רמת גן מרכז', deliveryTypeId: 1, fee: 29.9 }, slots: SLOTS }, { cartTotal: 120 });
+  assert.match(d.restrictionMessage!, /מינימום הזמנה ₪300/);
+});
+
+test('ZuZ: page not readable (structure changed / not loaded) → unknown', () => {
+  assert.equal(assessDelivery('tivtaam', fromZuz(null), HOME).deliveryStatus, 'unknown');
+});

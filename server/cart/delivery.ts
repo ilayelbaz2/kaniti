@@ -17,6 +17,7 @@ export type DeliveryRead = {
   windows?: string[];
   minOrder?: number;
   restriction?: string;
+  notTied?: string; // the site accepts the address, but the cart is set up for something else (other area / pickup)
 };
 
 const amount = (s?: string) => {
@@ -49,6 +50,54 @@ export function parseDeliveryText(text: string): DeliveryRead {
   const windows = [...new Set(lines.filter((l) => WINDOW.test(l)).map((l) => l.slice(0, 60)))];
   if (windows.length) read.windows = windows.slice(0, 6);
   if (read.available !== false && read.addressSelected && (windows.length || ACCEPTED.test(all))) read.available = true;
+  return read;
+}
+
+// ---------- ZuZ / Stor.ai sites (Tiv Taam, Victory, Yenot Bitan, Carrefour, Keshet, Quik) ----------
+
+/** Raw state read inside a ZuZ page: the cart's chosen delivery area, the site's own lookup of the household
+ *  address (geocoded against the chain's delivery polygons), and the free slots for the cart's area. */
+export type ZuzRaw = {
+  query?: string; // the household address the site was asked about
+  minOrder?: number;
+  cartArea?: { id: number; name: string; deliveryTypeId?: number; fee?: number } | null;
+  lookup?: { status: number; error?: string; areas: { id: number; name: string; branchId?: number; price?: number; min?: number | null }[]; components: { name: string; types: string[] }[] };
+  slots?: { from: string; to: string; price?: number }[];
+  cartDeliveryCost?: number;
+};
+
+const slotText = (from: string, to: string) => {
+  const f = new Date(from), t = new Date(to);
+  const day = f.toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'short', day: 'numeric', month: 'numeric' });
+  const hm = (d: Date) => d.toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${day} ${hm(f)}–${hm(t)}`;
+};
+
+export function fromZuz(raw: ZuzRaw | null | undefined): DeliveryRead {
+  if (!raw || !raw.lookup) return { pageOk: false };
+  const comp = (type: string) => raw.lookup!.components.find((c) => c.types.includes(type))?.name;
+  const address = raw.lookup.components.length ? { street: comp('route'), number: comp('street_number'), city: comp('locality') } : undefined;
+  const read: DeliveryRead = { pageOk: true, address, minOrder: raw.minOrder };
+  const { status, areas } = raw.lookup;
+  if (status === 404 || (status === 200 && !areas.length)) {
+    return { ...read, addressText: address ? undefined : raw.query, addressSelected: true, available: false, restriction: 'לפי האתר, הכתובת מחוץ לאזורי המשלוח של הרשת.' };
+  }
+  if (status !== 200) return { ...read, address: undefined, addressSelected: false, restriction: status === 400 ? 'האתר לא זיהה את הכתובת השמורה.' : `האתר לא החזיר תשובה לכתובת (${status}).` };
+  read.addressSelected = true;
+  const area = raw.cartArea;
+  const match = area ? areas.find((a) => a.id === area.id) : undefined;
+  if (!area) read.notTied = `העגלה באתר עוד לא משויכת לאזור משלוח. בחרו באתר את הכתובת/האזור שלכם (${areas[0].name}).`;
+  else if (area.deliveryTypeId === 2) read.notTied = 'בעגלה באתר נבחר איסוף עצמי ולא משלוח.';
+  else if (!match) read.notTied = `העגלה באתר משויכת לאזור "${area.name}", אבל לפי האתר הכתובת שלכם שייכת ל"${areas[0].name}". בחרו באתר את הכתובת הנכונה.`;
+  const priced = match ?? areas[0];
+  read.fee = raw.cartDeliveryCost && raw.cartDeliveryCost > 0 ? raw.cartDeliveryCost : area?.fee ?? priced.price;
+  if (priced.min) read.minOrder = priced.min;
+  if (match) {
+    read.available = true;
+    const windows = (raw.slots ?? []).map((s) => slotText(s.from, s.to));
+    if (windows.length) read.windows = [...new Set(windows)].slice(0, 6);
+    else read.restriction = 'אין כרגע חלונות משלוח פנויים לאזור הזה.';
+  }
   return read;
 }
 
@@ -120,6 +169,7 @@ export function assessDelivery(providerId: string, read: DeliveryRead, home: Add
     return out('user_action_required', 'כתובת המשלוח באתר השתנתה בזמן הכנת העגלה — אשרו אותה שוב.');
   }
   if (read.available === false) return out('unavailable', read.restriction ?? 'האתר לא מאפשר משלוח לכתובת הזו.', shown);
+  if (read.notTied) return out('user_action_required', read.notTied);
   if (read.available !== true) return out('unknown', 'האתר מציג את הכתובת אבל לא הראה אם יש אליה משלוח (למשל חלונות משלוח).', shown);
   const minIssue = read.minOrder && opts.cartTotal !== undefined && opts.cartTotal < read.minOrder
     ? `מינימום הזמנה ₪${read.minOrder} — בעגלה ₪${Math.round(opts.cartTotal)}. חסרים ₪${Math.ceil(read.minOrder - opts.cartTotal)}.` : undefined;

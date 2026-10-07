@@ -4,7 +4,8 @@
 import type { Page } from 'playwright-core';
 import { ZUZ_CHAINS } from '../providers/zuz.ts';
 import { kvGet } from '../db.ts';
-import { parseDeliveryText, type DeliveryRead } from './delivery.ts';
+import type { Address } from '../../shared/types.ts';
+import { fromZuz, parseDeliveryText, type DeliveryRead, type ZuzRaw } from './delivery.ts';
 
 export type CartLineIn = { productId: string; quantity: number; name: string; byWeight?: boolean };
 export type AddResult = { added: string[]; failed: { productId: string; reason: string }[] };
@@ -21,7 +22,7 @@ export interface CartDriver {
   addItems(page: Page, lines: CartLineIn[]): Promise<AddResult>;
   readCart(page: Page): Promise<CartState>;
   /** Delivery address / availability / fee / windows / minimum as the site itself shows them. Read-only. */
-  readDelivery(page: Page): Promise<DeliveryRead>;
+  readDelivery(page: Page, home?: Address): Promise<DeliveryRead>;
 }
 
 /** Visible text of the page (what the user sees). */
@@ -188,11 +189,40 @@ function zuzDriver(id: string, host: string): CartDriver {
         } catch { return {}; }
       }).catch(() => ({}));
     },
-    async readDelivery(page) {
-      return parseDeliveryText(await pageText(page));
+    async readDelivery(page, home) {
+      // The site's own state: which delivery area the cart is set to, the site's lookup of the household address
+      // against its delivery polygons, and the free delivery slots for that area. Read-only.
+      const query = home?.street ? `${home.street}, ${home.city}` : '';
+      return fromZuz(await page.evaluate(`(${ZUZ_DELIVERY})(${JSON.stringify({ query })})`).catch(() => null) as ZuzRaw | null);
     },
   };
 }
+
+// Runs inside the ZuZ page. Kept as a string so the bundler can't inject helpers into it.
+const ZUZ_DELIVERY = `async function (arg) {
+  var inj = window.angular.element(document.body).injector();
+  var Config = inj.get('Config'), Cart = inj.get('Cart'), User = inj.get('User');
+  if (Config.initPromise) await Config.initPromise;
+  var rid = Config.retailer.id, settings = Config.retailer.settings || {};
+  var out = { query: arg.query, minOrder: Number(settings.minimumOrderPrice) > 0 ? Number(settings.minimumOrderPrice) : undefined, cartArea: null };
+  var area = null; try { area = Config.getBranchArea(); } catch (e) { area = null; }
+  var chosen = !!area && (Config.isAreaSelectedByUser || Config.isUserDefaultArea || !!(User.session && User.session.userId));
+  if (chosen) out.cartArea = { id: area.id, name: area.name, deliveryTypeId: area.deliveryTypeId, fee: area.retailerBranchProductDeliveryPrice != null ? area.retailerBranchProductDeliveryPrice : area.retailerProductDeliveryPrice };
+  if (arg.query) {
+    var r = await fetch('/v2/retailers/' + rid + '/areas?appId=4&languageId=1&deliveryTypeId=1&deliveryTypeId=5&query=' + encodeURIComponent(arg.query), { credentials: 'include', headers: { Accept: 'application/json' } });
+    var j = await r.json().catch(function () { return null; });
+    out.lookup = { status: r.status, error: j && j.error, areas: ((j && j.areas) || []).map(function (a) { return { id: a.id, name: a.name, branchId: a.branchId, price: a.deliveryAreaPrice, min: a.deliveryMinimumCost }; }),
+      components: ((j && j.addressComponents) || []).map(function (c) { return { name: c.long_name, types: c.types }; }) };
+  }
+  if (out.cartArea && Config.branch) {
+    var t = await fetch('/v2/retailers/' + rid + '/branches/' + Config.branch.id + '/areas/' + area.id + '/delivery-times?appId=4', { credentials: 'include', headers: { Accept: 'application/json' } });
+    var times = await t.json().catch(function () { return []; });
+    out.slots = (Array.isArray(times) ? times : (times.times || [])).filter(function (s) { return s.isActive !== false && !s.isFull && s.newFrom; })
+      .sort(function (a, b) { return a.newFrom < b.newFrom ? -1 : 1; }).slice(0, 12).map(function (s) { return { from: s.newFrom, to: s.newTo, price: s.deliveryTimePrice }; });
+  }
+  var dc = Cart.total && Cart.total.deliveryCost; if (dc && dc.finalPriceForView > 0) out.cartDeliveryCost = dc.finalPriceForView;
+  return out;
+}`;
 
 const DRIVERS: CartDriver[] = [shufersal, ramilevy, ...ZUZ_CHAINS.map((c) => zuzDriver(c.id, c.host))];
 

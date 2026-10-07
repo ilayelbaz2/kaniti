@@ -95,7 +95,7 @@ async function run(job: CartJob, driver: CartDriver, deps?: BrowserDeps) {
   // address in the supermarket window; Kaniti never fills in or changes it.
   const home = store.household()?.homeAddress;
   const check = async (opts: AssessOpts = {}) =>
-    assessDelivery(job.providerId, await Promise.resolve().then(() => driver.readDelivery(page)).catch(() => ({ pageOk: false })), home, opts);
+    assessDelivery(job.providerId, await Promise.resolve().then(() => driver.readDelivery(page, home)).catch(() => ({ pageOk: false })), home, opts);
   let delivery = await check();
   if (delivery.deliveryStatus === 'user_action_required' && interactive()) {
     skipAddress = false;
