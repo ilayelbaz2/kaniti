@@ -111,7 +111,7 @@ export function generateBasket({ horizonDays, prices, previous, budgetCap }: Gen
       items.push(item(n, c, qty, 'opportunity', `יש עוד בבית, אבל ‎−${pct(disc)} — שווה להצטייד`, 'promotion', choice));
     } else {
       const reason = n.lastPurchasedAt && daysBetween(n.lastPurchasedAt) < 10 ? 'קניתם לאחרונה'
-        : est.known ? `לפי ההערכה נשאר מספיק (${qtyText(est.qty, c.stockUnit)})` : 'כנראה יש מספיק';
+        : est.known ? (est.confidence > 0.6 ? `לפי ההערכה נשאר מספיק (${qtyText(est.qty, c.stockUnit)})` : 'לפי מה שסיפרתם, נשאר מספיק') : 'כנראה יש מספיק';
       skipped.push(sk(n, reason));
     }
   }

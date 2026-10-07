@@ -166,8 +166,8 @@ function History() {
       {list.map((p, idx) => (
         <div className="card stack" key={p.id}>
           <div className="spread"><b>{new Date(p.createdAt).toLocaleDateString('he-IL', { day: 'numeric', month: 'short', year: 'numeric' })}</b><span className="big-num" style={{ fontSize: 20 }}>{nis(Math.round(p.total))}</span></div>
-          <div className="small muted">{p.storeName} · {p.items.length} פריטים</div>
-          <div className="row wrap small">{p.dealsUsed > 0 && <span>🔥 {p.dealsUsed} מבצעים נוצלו</span>}{p.substitutions > 0 && <span>↔ {p.substitutions} תחליפים</span>}</div>
+          <div className="small muted">{p.storeName} · {p.items.length === 1 ? 'פריט אחד' : `${p.items.length} פריטים`}</div>
+          <div className="row wrap small">{p.dealsUsed > 0 && <span>🔥 {p.dealsUsed === 1 ? 'מבצע אחד נוצל' : `${p.dealsUsed} מבצעים נוצלו`}</span>}{p.substitutions > 0 && <span>↔ {p.substitutions} תחליפים</span>}</div>
           <button className="link" style={{ alignSelf: 'flex-start' }} onClick={() => setOpen(open === p.id ? null : p.id)}>{open === p.id ? 'סגור' : 'פתח'}</button>
           {open === p.id && p.items.map((i) => (
             <div className="price-row" key={i.needId}><span>{i.emoji} {i.label} × {i.quantity}<div className="faint">{i.productName ? productLine({ name: i.productName, brand: i.brand, sizeText: i.sizeText, byWeight: i.byWeight }) : ''}{i.price ? ` · ${nis(i.price)}${i.byWeight || /לק"?ג|לק״ג/.test(i.sizeText ?? '') ? ' לק״ג' : ''}` : ''}</div></span>{i.status === 'opportunity' && <span className="tag opportunity">סטוק</span>}</div>
