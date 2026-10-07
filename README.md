@@ -28,6 +28,28 @@ Optional environment variables:
 
 To use it from your phone: run it on a home machine and open `http://<machine-ip>:8787`, then "Add to Home Screen" (it's a PWA).
 
+### What changed after the first real household test (Oct 2026)
+
+- **Chat** understands natural Hebrew, not canned sentences: "this time" vs "from now on" vs "only if it's cheap",
+  negation ("הטונה עוד לא נגמרה"), construct forms, brands or categories on their own ("לא פפסי", "איזה דג זול"),
+  a single chain ("כמה ייצא ברמי לוי?"), and "זה/אותו" (30-minute conversation context). Unknown products ("שים גם
+  חרדל") are searched first and added only when found or confirmed. Unclear → one useful question. With
+  `ANTHROPIC_API_KEY`, Claude interprets first, but only as validated typed actions (no prices/products/totals of its own).
+- **Every product identifies itself**: brand + name + size (weighted: per kg) on basket, deals, search, compare,
+  substitutions, cart and history. A product with no brand and no size is never auto-bought — you pick.
+- **Deals** use every chain's prices: שווה עכשיו · שווה לעשות סטוק · דברים שאתם קונים בכל מקרה · אולי תאהבו.
+  "Good" means vs the shelf price, vs this product's own recent price, or vs the same need at other chains (per
+  100g/ml/kg). Nothing is padded; when only a few qualify the screen says why. Promo end dates when published.
+- **+ הוסף מוצר** in the basket: search across your chains, pick the exact product or let Kaniti choose, quantity.
+- **Exact-address delivery from onboarding**: ✅ the chain's own site confirmed your street address (ZuZ chains),
+  🔐 needs your login to verify (Shufersal, Rami Levy), ❌ the site says it doesn't deliver there, ? not verified yet.
+- **Staples** ("מה אסור שייגמר בבית?") by category with תמיד / לפעמים / לא אצלנו, your own items, and "what always
+  runs out?". A staple is not a purchase schedule — Vanish can be a staple and still be bought once in two months.
+- **הבית → תובנות**: spending (month, average, last, per shop), one category chart, shopping rhythm, consumption
+  insights only when the data supports them, savings split into measured / estimated / potential, "when should we
+  shop next?", and cheapest-weekday learning (price snapshots per day/chain/need; says "not enough history" until
+  there are ≥4 weeks). Every insight is labelled נצפה / הערכה / אין מספיק נתונים. Also answerable in chat.
+
 ### Preparing the real supermarket cart (V1.5)
 
 Compare → **הכן עגלה ב…** (or in chat: "תכין לי עגלה בשופרסל").
@@ -35,14 +57,19 @@ Compare → **הכן עגלה ב…** (or in chat: "תכין לי עגלה בש�
 1. Kaniti opens a real Chrome window **on the computer that runs Kaniti** (install Google Chrome; or set `KANITI_CHROME_PATH`).
 2. If the supermarket needs you to log in — or shows a CAPTCHA / SMS code — you do it yourself in that window.
    Kaniti waits and continues on its own. It never sees or stores your password.
-3. **Delivery address.** If the site has no delivery address attached (or a different one), Kaniti asks you to choose /
+3. **Delivery address.** While you log in, register or choose an address in that window, Kaniti never navigates
+   or reloads it — it only reads (in-page requests / app state) once the page has been quiet for a few seconds, and
+   continues by itself. "בחרתי כתובת — המשך" always moves on (it re-reads once; it never asks you to choose again).
+    If the site has no delivery address attached (or a different one), Kaniti asks you to choose /
    confirm *your* address in that window and waits. It then reads what the site itself shows — the selected address,
    whether it delivers there, the delivery fee, delivery windows, minimum order and any restriction — and labels it:
    `משלוח לכתובת שלך מאומת` (confirmed) · `הרשת לא שולחת כרגע לכתובת הזו` (unavailable — nothing is added) ·
    `צריך לבחור/לאשר כתובת באתר הסופר` (user action required) · `לא הצלחתי לאמת משלוח לכתובת` (unknown).
    "Confirmed" requires the site to show the household's street, house number and city **and** accept delivery there
    (offered delivery slots / an explicit acceptance). A city or a nearby branch is never treated as proof.
-4. Kaniti puts every confidently-matched item into the supermarket's own cart, using the same cart calls the website
+4. Kaniti puts every confidently-matched item into the supermarket's own cart, then **reads the site's cart back**:
+   only items found there count as added; if the cart can't be read they are "not verified" and the job is never
+   "ready". A redirect alone is never success. Kaniti using the same cart calls the website
    makes, and stops at the cart page. Doubtful matches are **not** added — you'll see them listed.
    After adding, it re-reads the delivery state: if the address on the site changed meanwhile, or can't be read, the
    cart is **not** shown as tied to your address.
@@ -79,7 +106,7 @@ npm run live-check -- "רמת גן"    # real sites: delivery, search, promos, b
 npm run cart-check -- tivtaam     # fills a real cart at the supermarket and reads it back (stops at the cart)
 npm run rehearsal -- "רמת גן"     # two full shopping cycles on real data for the household profile
 npm run match-report              # dumps real search results per household item (for matching regression tests)
-npm run home-validation           # AT HOME, server stopped: per chain — live basket quote, you log in / pick your address
+npm run home-validation           # AT HOME, server stopped (see "Home validation" below): per chain — live basket quote, you log in / pick your address
                                   # in Chrome, Kaniti reads delivery from the site, prepares the cart, re-checks the address.
                                   # Writes data/home-validation.md. `-- tivtaam --verify-only` checks delivery only.
 ```
@@ -168,3 +195,22 @@ adapter; one-store comparison with live/branch/estimate labels; per-provider fai
 **Sprint 4 — learning loop + polish.** Deals screen (now/stock/maybe), restrained discovery (max 2–3, never auto-added),
 "what I learned about you" with confidence and inline editors, purchase confirmation + history, quantity feedback,
 learning from removals/replacements/quantity changes, loading/empty/error states, mobile pass.
+
+
+## Home validation (what still has to be checked at home)
+
+The cloud can only reach Tiv Taam (live: search, cart with read-back, exact-address areas — all passing in CI).
+Shufersal, Rami Levy and the other ZuZ chains block datacenter IPs. On the home computer:
+
+```bash
+cd ~/kaniti && git pull && npm install && npm run build
+npm run dev                       # set the full address (street + number) in onboarding or הבית → עריכה, then Ctrl+C
+npm run home-validation -- shufersal --verify-only    # log in + choose the address in the Chrome window
+npm run home-validation -- ramilevy --verify-only
+npm run home-validation           # every chain: live quote → real cart → read back → delivery re-check
+cat data/home-validation.md
+```
+
+What to watch: Shufersal's address flow must not refresh while you're in it; Rami Levy must continue by itself
+after you choose the address (or immediately after "המשך"); each chain's card must show items "נבדק" in the site
+cart. Paste data/home-validation.md back to the assistant if anything looks off.
