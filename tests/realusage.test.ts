@@ -122,3 +122,19 @@ test('insights: potential saving uses the deal percentage correctly (30 = 30%) a
   assert.equal(r.potential, 6);
   assert.equal(r.saved, 0);
 });
+
+test('matching: long catalogue names with a brand prefix are still clear matches (live Tiv Taam regressions)', async () => {
+  const { chooseProduct } = await import('../server/engine/match.ts');
+  const { conceptById } = await import('../server/catalog.ts');
+  const { newNeed } = await import('../server/state.ts');
+  const pick = (id: string, name: string, brand?: string, sizeText?: string) => {
+    const c = conceptById.get(id)!;
+    return chooseProduct(c, { ...newNeed(c, 2, 1), flexibility: 'category_flexible' }, [{ providerId: 'tivtaam', productId: '1', name, brand, sizeText, price: 20, available: true, source: 'live', fetchedAt: '' }]);
+  };
+  assert.ok(!pick('COLA_ZERO', 'קוקה- קולה zero מארז שישייה 1.5 ליטר', 'קוקה קולה')!.uncertain);
+  assert.ok(!pick('TUNA', 'וילי פוד רביעית נתחי טונה בשמן צמחי 640 גרם', 'וילי פוד')!.uncertain);
+  assert.ok(!pick('EGGS', 'ביצי רמות השבים 12 M')!.uncertain, 'eggs are identifiable without a brand');
+  assert.ok(!pick('LETTUCE', 'חסה ערבית')!.uncertain, 'produce is identifiable as is');
+  assert.ok(!pick('DISHWASHER_TABS', 'ספארק 30 טבליות למדיח', 'ספארק')!.uncertain);
+  assert.ok(pick('LAUNDRY_SOFTENER', 'מרכך כביסה כחול מרוכז')!.uncertain, 'a branded-category product with no brand and no size → the user picks');
+});

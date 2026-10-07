@@ -97,11 +97,14 @@ export function headMatch(concept: Concept, p: ProductSearchResult): boolean {
   const must = (concept.mustInclude ?? []).map(norm);
   if (!must.length) return true;
   // Long catalogue names often start with the brand ("וילי פוד רביעית נתחי טונה") — skip it, and skip numbers.
-  let name = norm(p.name);
+  const head = (name: string) => {
+    const w = words(name).filter((x) => !/^\d/.test(x)).slice(0, 4).map((x) => x.replace(/^[והבל](?=..)/, ''));
+    return w.some((x) => must.some((m) => x.startsWith(m))) || must.some((m) => name.startsWith(m));
+  };
+  const name = norm(p.name);
   const brand = p.brand ? norm(p.brand) : '';
-  if (brand && name.startsWith(brand + ' ')) name = name.slice(brand.length + 1);
-  const w = words(name).filter((x) => !/^\d/.test(x)).slice(0, 4).map((x) => x.replace(/^[והבל](?=..)/, ''));
-  return w.some((x) => must.some((m) => x.startsWith(m))) || must.some((m) => name.startsWith(m));
+  // The brand itself may carry the core word ("קוקה קולה"), so the plain name counts too.
+  return head(name) || (!!brand && name.startsWith(brand + ' ') && head(name.slice(brand.length + 1)));
 }
 
 /** Categories where a product without brand AND size can't be told apart (produce/eggs/meat are identifiable as is). */
