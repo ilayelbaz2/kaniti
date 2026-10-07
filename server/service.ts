@@ -7,6 +7,7 @@ import { basketTotal, discoveryDeals, emptyPriceBook, evalCondition, generateBas
 import { chooseProduct, cheaper, effPrice, fit, relevant } from './engine/match.ts';
 import { householdProviders, referenceBook, scanPrices } from './providers/index.ts';
 import { round1 } from './catalog.ts';
+import { currentJob as currentCartJob } from './cart/prepare.ts';
 
 export type ScanResult = { book: PriceBook; failures: PriceBook['failures'] };
 
@@ -285,16 +286,20 @@ export function confirmPurchase(input: ConfirmInput): Purchase {
     store.saveNeed(n);
     items.push({ needId: row.needId, label: c.label, emoji: c.emoji, quantity: row.quantity, unit: c.packLabel, productName: row.productName, price: row.price, status: bi?.status ?? 'need' });
   }
-  // Items we suggested but they didn't buy count as a soft removal.
+  // Items we suggested but they chose not to buy count as a soft removal — but not when it wasn't their choice:
+  // an unmet "only if cheap" condition, or an item the store didn't have / we couldn't match safely.
+  const job = input.viaCart ? currentCartJob() : null;
+  const notTheirChoice = new Set(job?.lines.filter((l) => l.state !== 'added').map((l) => l.needId) ?? []);
   for (const bi of basket?.items ?? []) {
-    if (bi.accepted && bi.status !== 'discovery' && !input.items.some((r) => r.needId === bi.needId && r.quantity > 0)) learnFromRemoval(bi.needId, false);
+    if (!bi.accepted || bi.status === 'discovery' || bi.condition?.met === false || bi.uncertain || notTheirChoice.has(bi.needId)) continue;
+    if (!input.items.some((r) => r.needId === bi.needId && r.quantity > 0)) learnFromRemoval(bi.needId, false);
   }
   const purchase: Purchase = {
     id: uid('p_'), createdAt: nowIso(), storeName: input.storeName, providerId: input.providerId,
     total: input.total ?? round1(items.reduce((s, i) => s + (i.price ?? 0) * i.quantity, 0)),
     items, dealsUsed: items.filter((i) => i.status === 'opportunity').length,
     substitutions: basket?.items.filter((i) => i.usualProductName || i.substitutedFrom).length ?? 0,
-    removed: (basket?.items ?? []).filter((bi) => bi.accepted && !items.some((x) => x.needId === bi.needId)).map((bi) => ({ needId: bi.needId, label: bi.label })),
+    removed: (basket?.items ?? []).filter((bi) => bi.accepted && bi.condition?.met !== false && !items.some((x) => x.needId === bi.needId)).map((bi) => ({ needId: bi.needId, label: bi.label })),
     stockUps: items.filter((i) => i.status === 'opportunity').map((i) => i.label),
     viaCart: input.viaCart || undefined,
   };

@@ -127,3 +127,16 @@ test('ranking: physical store wins only above the driving threshold', () => {
   r = rankQuotes([online, bigSaving], basket, 60);
   assert.equal(r.recommendation.kind, 'physical');
 });
+
+test('not buying an item that was unavailable or conditional does not teach "they use less"', async () => {
+  await say('#build 14 force');
+  await say('קח שני וניש אם ממש זול'); // demo prices: condition may or may not be met
+  const b = store.basket()!;
+  const vanish = b.items.find((i) => i.needId === 'VANISH')!;
+  const t0 = store.need('VANISH')!.typical14DayQty;
+  const eggsBefore = store.need('EGGS')!.removedCount;
+  const bought = b.items.filter((i) => i.accepted && i.needId !== 'VANISH' && i.condition?.met !== false).map((i) => ({ needId: i.needId, quantity: i.quantity }));
+  svc.confirmPurchase({ storeName: 'x', items: bought });
+  if (vanish.condition?.met === false) assert.equal(store.need('VANISH')!.typical14DayQty, t0, 'unmet condition is not a rejection');
+  assert.equal(store.need('EGGS')!.removedCount, eggsBefore);
+});

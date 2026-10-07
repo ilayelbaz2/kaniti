@@ -106,9 +106,12 @@ function finish(job: CartJob, cartUrl: string, cart: { itemCount?: number; total
   const added = job.lines.filter((l) => l.state === 'added').length;
   const notAdded = job.lines.filter((l) => l.state === 'failed' || l.state === 'skipped').length;
   const status: CartJobStatus = added === 0 ? 'failed' : notAdded ? 'partial' : 'ready';
+  // The site's cart may already have had things in it — say so, so nothing unexpected gets paid for.
+  const extra = cart.itemCount !== undefined ? cart.itemCount - added : 0;
+  const base = status === 'ready' ? `העגלה מוכנה ב${job.providerName} 🎯` : status === 'partial' ? `הכנתי את רוב העגלה — ${added}/${job.lines.length} פריטים נוספו` : `לא הצלחתי להוסיף פריטים לעגלה ב${job.providerName}.`;
   save(job, {
-    status, cartUrl, cartTotal: cart.total, cartItemCount: cart.itemCount, deliveryWindow: cart.deliveryWindow,
-    message: status === 'ready' ? `העגלה מוכנה ב${job.providerName} 🎯` : status === 'partial' ? `הכנתי את רוב העגלה — ${added}/${job.lines.length} פריטים נוספו` : `לא הצלחתי להוסיף פריטים לעגלה ב${job.providerName}.`,
+    status, cartUrl, cartTotal: cart.total, cartItemCount: cart.itemCount, deliveryWindow: cart.deliveryWindow, preexistingItems: extra > 0 ? extra : undefined,
+    message: extra > 0 && added > 0 ? `${base}. שימו לב: בעגלה יש עוד ${extra} פריטים שהיו שם קודם — בדקו לפני התשלום.` : base,
   });
 }
 

@@ -292,6 +292,7 @@ export type CartJob = {
   cartUrl?: string;
   cartTotal?: number; // as the supermarket shows it
   cartItemCount?: number;
+  preexistingItems?: number; // items that were already in the site's cart before Kaniti added its lines
   plannedTotal?: number; // Kaniti's quote for the same lines
   deliveryFee?: number;
   deliveryWindow?: string;

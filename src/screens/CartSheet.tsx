@@ -57,6 +57,7 @@ export function CartSheet({ ctx, providerId, onClose }: { ctx: Ctx; providerId?:
                     <div className="faint">אפשר להוסיף אותם ידנית באתר.</div>
                   </div>
                 )}
+                {job.preexistingItems ? <div className="banner warn">בעגלה באתר יש עוד {job.preexistingItems} פריטים שהיו שם לפני כן — הסכום כולל אותם. בדקו לפני התשלום.</div> : null}
                 {job.anonymous && <div className="banner warn">לא הייתם מחוברים — העגלה נשמרה בחלון הדפדפן שנפתח במחשב. התחברו שם כדי שתופיע גם באפליקציה.</div>}
                 <div className="banner ok small">התשלום והאישור הסופי נעשים באתר של {job.providerName}. קניתי לא שומרת ולא רואה פרטי תשלום.</div>
                 {job.cartUrl && !job.demo

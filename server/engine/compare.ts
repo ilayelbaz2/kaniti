@@ -118,6 +118,11 @@ export function rankQuotes(quotes: BasketQuote[], basket: Basket, threshold: num
   } else if (bp) {
     recommendation = { text: `אין כרגע מחיר אונליין. לפי קובץ המחירים של הסניף, ${bp.providerName} יוצא ~₪${Math.round(bp.total)}.`, winnerId: bp.providerId, kind: 'physical' };
   }
+  // If a cheaper branch was ranked lower because it lacks a must-have item, say so.
+  const cheapestBranch = [...physical].sort((a, b) => a.total - b.total)[0];
+  if (cheapestBranch && bp && cheapestBranch !== bp && hardMissing(cheapestBranch) > 0) {
+    recommendation.text += ` (${cheapestBranch.providerName} זול יותר, אבל חסר שם ${cheapestBranch.lines.filter((l) => l.missing && hardNeeds.includes(l.needId)).map((l) => l.label).join(', ')} — וזה חובה אצלכם.)`;
+  }
   if (failed.length && (bo || bp)) recommendation.text += ` (${failed.map((f) => f.providerName).join(', ')} לא החזירו מחיר — המשכתי בלעדיהם.)`;
   return { ordered: [...online, ...physical, ...failed], recommendation };
 }
