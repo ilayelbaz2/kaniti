@@ -92,3 +92,16 @@ test('unsupported provider → no automation, clear message', async () => {
   const job = startCartJob({ quote: quote('nosuchchain') });
   assert.equal(job.status, 'unsupported');
 });
+
+test('optional login (ZuZ): user can continue without logging in → anonymous cart, labelled', async () => {
+  const f = fakeDriver({ loggedInAfter: 999 });
+  const d = { ...f.driver, allowAnonymous: true };
+  const p = _runForTest(quote(), d as never, deps());
+  await new Promise((r) => setTimeout(r, 50));
+  const { currentJob } = await import('../server/cart/prepare.ts');
+  assert.equal(currentJob()!.userAction, 'login_optional');
+  resume(true);
+  const job = await p;
+  assert.equal(job.anonymous, true);
+  assert.ok(['ready', 'partial'].includes(job.status));
+});

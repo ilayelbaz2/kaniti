@@ -48,7 +48,7 @@ export const api = {
   feedback: (id: string, needId: string, value: string) => call<Purchase>(`/purchases/${id}/feedback`, { needId, value }),
   prepareCart: (providerId?: string) => call<CartJob>('/cart/prepare', { providerId }),
   cartJob: () => call<CartJob | null>('/cart/job'),
-  resumeCart: () => call<CartJob | null>('/cart/resume', {}),
+  resumeCart: (withoutLogin = false) => call<CartJob | null>('/cart/resume', { withoutLogin }),
   cartSeed: () => call<{ providerId: string; providerName: string; total?: number; items: { needId: string; quantity: number; productName?: string; price?: number }[] } | null>('/cart/seed'),
   devAdvance: (days: number) => call<AppState>('/dev/advance', { days }),
 };

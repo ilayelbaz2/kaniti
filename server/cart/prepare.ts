@@ -18,8 +18,10 @@ function save(job: CartJob, patch: Partial<CartJob> & { status?: CartJobStatus }
   kvSet('cartJob', job);
 }
 
-/** User says "I logged in / I finished the check" — re-check right away instead of waiting for the next poll. */
-export function resume() { poke?.(); }
+let skipLogin = false;
+/** User says "I logged in / I finished the check" — re-check right away instead of waiting for the next poll.
+ *  `withoutLogin` continues with an anonymous cart on sites that allow it. */
+export function resume(withoutLogin = false) { if (withoutLogin) skipLogin = true; poke?.(); }
 
 async function waitFor(check: () => Promise<boolean>, ms: number): Promise<boolean> {
   const until = Date.now() + ms;
@@ -70,12 +72,17 @@ async function run(job: CartJob, driver: CartDriver, deps?: BrowserDeps) {
   }
 
   let loggedIn = await driver.isLoggedIn(page);
-  if (!loggedIn && !driver.allowAnonymous) {
+  // Logged-in carts sync to the account (and the phone app). Anonymous carts only live in this browser window.
+  if (!loggedIn && (!driver.allowAnonymous || interactive())) {
     if (!interactive()) return save(job, { status: 'failed', loginRequired: true, message: `צריך להתחבר ל${job.providerName}, ואין כאן מסך. הפעילו את קניתי במחשב הביתי.` });
+    skipLogin = false;
     await page.goto(driver.loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-    save(job, { status: 'login_required', loginRequired: true, userAction: 'login', message: `התחברו לחשבון שלכם ב${job.providerName} בחלון שנפתח (כולל קוד SMS אם נשלח). אני ממשיך לבד ברגע שתתחברו.` });
-    loggedIn = await waitFor(() => driver.isLoggedIn(page), LOGIN_WAIT_MS);
-    if (!loggedIn) return save(job, { status: 'failed', userAction: undefined, message: 'לא זיהיתי התחברות. אפשר לנסות שוב.' });
+    save(job, {
+      status: 'login_required', loginRequired: true, userAction: driver.allowAnonymous ? 'login_optional' : 'login',
+      message: `התחברו לחשבון שלכם ב${job.providerName} בחלון שנפתח (כולל קוד SMS אם נשלח). אני ממשיך לבד ברגע שתתחברו.`,
+    });
+    loggedIn = await waitFor(async () => (driver.allowAnonymous && skipLogin) || driver.isLoggedIn(page), LOGIN_WAIT_MS) && (await driver.isLoggedIn(page));
+    if (!loggedIn && !(driver.allowAnonymous && skipLogin)) return save(job, { status: 'failed', userAction: undefined, message: 'לא זיהיתי התחברות. אפשר לנסות שוב.' });
     await page.goto(driver.homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   }
 

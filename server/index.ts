@@ -191,7 +191,7 @@ app.post('/api/purchases/:id/feedback', wrap((req) => {
 
 app.post('/api/cart/prepare', wrap(async (req) => svc.prepareProviderCart(req.body.providerId)));
 app.get('/api/cart/job', wrap(() => cartJobs.currentJob()));
-app.post('/api/cart/resume', wrap(() => { cartJobs.resume(); return cartJobs.currentJob(); }));
+app.post('/api/cart/resume', wrap((req) => { cartJobs.resume(!!req.body?.withoutLogin); return cartJobs.currentJob(); }));
 app.post('/api/cart/clear', wrap(() => { cartJobs.clearJob(); return { ok: true }; }));
 app.get('/api/cart/seed', wrap(() => cartJobs.cartSeed()));
 

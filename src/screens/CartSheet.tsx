@@ -70,6 +70,7 @@ export function CartSheet({ ctx, providerId, onClose }: { ctx: Ctx; providerId?:
                 <div className="banner warn">{job.message}</div>
                 <div className="faint">החלון נפתח במחשב שמריץ את קניתי. הסיסמה וקוד ה־SMS נכנסים רק באתר של הרשת — לא בקניתי.</div>
                 <button className="btn block" onClick={() => api.resumeCart().then((j) => j && setJob(j))}>{job.status === 'login_required' ? 'התחברתי — המשך' : 'סיימתי את האימות — המשך'}</button>
+                {job.userAction === 'login_optional' && <button className="btn ghost" onClick={() => api.resumeCart(true).then((j) => j && setJob(j))}>המשך בלי להתחבר (העגלה תישאר רק בחלון במחשב)</button>}
               </>
             ) : job.status === 'failed' || job.status === 'unsupported' ? (
               <>
