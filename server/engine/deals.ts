@@ -5,8 +5,7 @@ import type { Concept } from '../catalog.ts';
 import { store } from '../db.ts';
 import { daysBetween, now } from '../clock.ts';
 import { allConcepts, dealSensitivityFor, estimateStock, getConcept } from '../state.ts';
-import { effPrice, headMatch, parseSize, relevant } from './match.ts';
-import { identityGaps } from '../../shared/product.ts';
+import { ambiguousFor, effPrice, headMatch, parseSize, relevant } from './match.ts';
 
 export type FullBook = { perProvider: Map<string, Map<string, ProductSearchResult[]>> };
 export type DealsResult = { deals: Deal[]; checkedNeeds: number; providers: number; note?: string };
@@ -48,7 +47,7 @@ function candidates(c: Concept, n: HouseholdNeed | null, book: FullBook): Produc
   const out: ProductSearchResult[] = [];
   for (const byNeed of book.perProvider.values()) {
     for (const p of byNeed.get(c.id) ?? []) {
-      if (!relevant(c, n, p) || !headMatch(c, p) || identityGaps(p).ambiguous) continue;
+      if (!relevant(c, n, p) || !headMatch(c, p) || ambiguousFor(c, p)) continue;
       if (n?.flexibility === 'exact_product') {
         const usual = n.lastProductName && p.name.replace(/\s+/g, ' ').trim() === n.lastProductName.replace(/\s+/g, ' ').trim();
         const brand = n.preferredBrands.some((b) => `${p.name} ${p.brand ?? ''}`.includes(b));
