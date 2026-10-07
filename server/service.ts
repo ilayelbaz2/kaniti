@@ -4,7 +4,7 @@ import { store, kvGet, kvSet } from './db.ts';
 import { nowIso, uid } from './clock.ts';
 import { allConcepts, customConceptFor, ensureNeed, estimateStock, getConcept, learnFromQuantity, learnFromRemoval, learnFromReplacement, logEvent, updateNeed } from './state.ts';
 import { basketTotal, discoveryDeals, emptyPriceBook, evalCondition, generateBasket, householdDeals, toResolved, type PriceBook } from './engine/basket.ts';
-import { chooseProduct, cheaper, effPrice, fit, relevant } from './engine/match.ts';
+import { ambiguousFor, chooseProduct, cheaper, effPrice, fit, relevant } from './engine/match.ts';
 import { cachedSearch, householdProviders, onlineCatalog, referenceBook, scanPrices } from './providers/index.ts';
 import { dealSections, type FullBook } from './engine/deals.ts';
 import { withTimeout } from './providers/types.ts';
@@ -47,6 +47,7 @@ export async function scanForBasket(extraNeedIds: string[] = []): Promise<ScanRe
     }
     recordScanSnapshots(chosen);
   } catch { /* history is best-effort */ }
+  kvSet('lastScanIds', ids);
   kvSet('lastFullBook', { byNeed: [...full.byNeed.entries()], perProvider: [...full.perProvider.entries()].map(([k, v]) => [k, [...v.entries()]]), failures: full.failures });
   return { book: referenceBook(full, h), failures: full.failures };
 }
@@ -165,6 +166,7 @@ export async function addItem(opts: { needId?: string; newLabel?: string; quanti
   item.quantity = qty;
   item.accepted = true;
   item.source = 'user_request';
+  if (item.status === 'discovery') item.status = 'need'; // they asked for it — no longer "maybe you'll like" 
   item.lockedByUser = false;
   const exact = opts.product ? seenProduct(opts.product.providerId, opts.product.productId) : undefined;
   if (exact) {
@@ -281,8 +283,12 @@ export function setBudget(cap: number | null): Basket {
 export async function getDeals(): Promise<{ deals: Deal[]; failures: PriceBook['failures']; demo: boolean; providers: Record<string, string>; note?: string; checkedNeeds: number }> {
   let full = loadFullBook();
   let failures = lastBook().failures;
-  if (!full) {
-    const r = await scanForBasket();
+  // Anything the household buys now (incl. items added in chat) must have been checked — else rescan.
+  const scanned = new Set<string>(kvGet<string[]>('lastScanIds') ?? []); // asked for, whether or not anything was found
+  const wanted = [...store.needs().filter((n) => n.active && !n.neverSuggest).map((n) => n.id), ...(store.basket()?.items.map((i) => i.needId) ?? [])];
+  const missing = [...new Set(wanted)].filter((id) => !scanned.has(id));
+  if (!full || missing.length) {
+    const r = await scanForBasket(missing);
     failures = r.failures;
     full = loadFullBook();
   }
@@ -308,10 +314,11 @@ export function dismissDeal(dealId: string, needId: string) {
   logEvent({ type: 'deal_dismissed', needId, value: dealId });
 }
 
-export async function priceLookup(needId: string) {
+export async function priceLookup(needId: string, variant?: string) {
   const h = store.household();
   const c = getConcept(needId);
-  const need = ensureNeed(needId);
+  // A variant said in this message ("שמן זית", "חלב 1%") narrows this lookup only.
+  const need = variant ? { ...ensureNeed(needId), variant } : ensureNeed(needId);
   const providers = householdProviders(h, { physical: true });
   const book = await scanPrices([needId], providers);
   const rows: { provider: string; name: string; price: number; promoText?: string; source: ProductSearchResult['source'] }[] = [];
@@ -321,6 +328,16 @@ export async function priceLookup(needId: string) {
   }
   rows.sort((a, b) => a.price - b.price);
   return { rows, failures: book.failures.map((f) => f.name), concept: c };
+}
+
+/** The cheapest clear product for a need in one specific variant ("חלב 1%"), across the household's chains. */
+export async function variantPick(needId: string, variant: string) {
+  const c = getConcept(needId);
+  const need = { ...ensureNeed(needId), variant };
+  const providers = householdProviders(store.household(), { physical: false });
+  const book = await scanPrices([needId], providers);
+  const all = providers.flatMap((p) => (book.perProvider.get(p.id)?.get(needId) ?? []).filter((x) => relevant(c, need, x) && !ambiguousFor(c, x)).map((x) => ({ ...x, providerName: p.name })));
+  return { best: all.sort(cheaper)[0], failures: book.failures.map((f) => f.name) };
 }
 
 export async function discoveryList(): Promise<Deal[]> {
@@ -362,8 +379,8 @@ export function confirmPurchase(input: ConfirmInput): Purchase {
     const promoUsed = !!line?.product?.promoPrice && (!line.product.promoMinQty || row.quantity >= line.product.promoMinQty);
     const usual = bi?.usualProductName ? (book.byNeed.get(row.needId) ?? []).find((r) => r.name === bi.usualProductName) : undefined;
     items.push({
-      needId: row.needId, label: c.label, emoji: c.emoji, quantity: row.quantity, unit: c.packLabel, productName: row.productName, price: row.price, status: bi?.status ?? 'need',
-      brand: prod?.brand, sizeText: prod?.sizeText, providerId: input.providerId, productId: prod?.productId,
+      needId: row.needId, label: c.label, emoji: c.emoji, quantity: row.quantity, unit: c.packLabel, productName: row.productName, price: row.price !== undefined ? Math.round(row.price * 100) / 100 : undefined, status: bi?.status ?? 'need',
+      brand: prod?.brand, sizeText: prod?.sizeText, byWeight: prod?.byWeight || undefined, providerId: input.providerId, productId: prod?.productId,
       regularPrice: promoUsed ? line!.product!.price : undefined, promoMinQty: promoUsed ? line!.product!.promoMinQty : undefined, promoEndsAt: promoUsed ? line!.product!.promoEndsAt : undefined,
       usualProductName: usual ? usual.name : undefined, usualPrice: usual ? effPrice(usual) : undefined,
       stockBefore: est.known ? est.qty : undefined,

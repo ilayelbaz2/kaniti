@@ -146,3 +146,23 @@ test('matching: long catalogue names with a brand prefix are still clear matches
   assert.ok(!pick('DISHWASHER_TABS', 'ספארק 30 טבליות למדיח', 'ספארק')!.uncertain);
   assert.ok(pick('LAUNDRY_SOFTENER', 'מרכך כביסה כחול מרוכז')!.uncertain, 'a branded-category product with no brand and no size → the user picks');
 });
+
+test('staples free text: only whole product names map to the catalog; the rest stays in the household\'s words', async () => {
+  const { staplesFromText } = await import('../server/chat/parser.ts');
+  assert.deepEqual(staplesFromText('קטשופ, נייר אפייה'), { ids: [], custom: ['קטשופ', 'נייר אפייה'] });
+  assert.deepEqual(staplesFromText('קפה ושוקו'), { ids: ['COFFEE'], custom: ['שוקו'] });
+  assert.deepEqual(staplesFromText('נייר טואלט וגם ביצים'), { ids: ['TOILET_PAPER', 'EGGS'], custom: [] });
+  assert.deepEqual(staplesFromText('לא, אין'), { ids: [], custom: [] });
+  assert.deepEqual(staplesFromText('לא חלב'), { ids: [], custom: [] });
+});
+
+test('skipping the staples step still gives a real first basket (basic list, not claimed as "always")', async () => {
+  completeOnboarding({ adults: 2, children: [], kosher: true, dairyAllergy: false, vegetarian: true, address: { city: 'רמת גן', street: 'ביאליק 12' },
+    onlineProviders: ['tivtaam'], physicalStores: [], flex: {}, staples: [], stapleLevels: {}, threshold: 60 } as never);
+  const active = store.needs().filter((n) => n.active);
+  assert.ok(active.length >= 8, `active: ${active.length}`);
+  assert.ok(active.every((n) => n.staple === undefined), 'nothing is claimed as a staple the household never said');
+  assert.ok(!active.some((n) => n.id === 'CHICKEN_BREAST'), 'vegetarian household gets no meat');
+  const b = await svc.buildBasket(14);
+  assert.ok(b.basket.items.length >= 5);
+});

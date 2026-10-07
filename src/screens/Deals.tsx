@@ -12,6 +12,10 @@ const SECTIONS: [Deal['kind'], string, string, string][] = [
   ['discovery', '💡', 'אולי תאהבו', 'משהו חדש, במידה'],
 ];
 
+/** Same product (or the same name at another chain — switching to it changes nothing in the basket). */
+const sameProduct = (a: { providerId: string; productId: string; name: string } | undefined, b: { providerId: string; productId: string; name: string }) =>
+  !!a && ((a.providerId === b.providerId && a.productId === b.productId) || a.name.replace(/\s+/g, ' ').trim() === b.name.replace(/\s+/g, ' ').trim());
+
 const endsText = (iso?: string) => {
   if (!iso) return null;
   const d = new Date(iso);
@@ -84,7 +88,7 @@ export function Deals({ ctx }: { ctx: Ctx }) {
                   <div className="small muted">{d.why}</div>
                   {cur && <div className="small">✓ כבר בסל ({cur.quantity} × {cur.unit})</div>}
                   <div className="row wrap">
-                    {cur && cur.product?.productId !== d.product.productId ? <>
+                    {cur && !sameProduct(cur.product, d.product) ? <>
                       <button className="btn small" onClick={() => switchTo(d, cur.quantity)}>החלף בסל למוצר הזה</button>
                       <button className="btn small ghost" onClick={() => skip(d)}>לא מעניין</button>
                     </> : cur ? <>

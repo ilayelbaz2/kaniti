@@ -109,7 +109,7 @@ function QuoteCard({ q, win, bestOnline, threshold, onCart }: { q: BasketQuote; 
         <div>
           {q.lines.map((l) => (
             <div className="price-row" key={l.needId}>
-              <span className="grow">{l.label} × {l.quantity}<div className="faint">{l.uncertain ? `לא בטוח: ${l.product ? productLine(l.product) : ''}` : l.missing ? 'לא נמצא' : l.product ? productLine(l.product) : ''}{l.product?.promoText ? ` · ${l.product.promoText}` : ''}</div></span>
+              <span className="grow">{l.label} × {l.quantity}<div className="faint">{l.uncertain ? `לא בטוח: ${l.product ? productLine(l.product) : ''}` : l.missing ? 'לא נמצא' : l.product ? productLine(l.product) : ''}{l.product?.byWeight && !l.missing ? ` · ${nis(l.product.promoPrice ?? l.product.price)} לק״ג` : ''}{l.product?.promoText ? ` · ${l.product.promoText}` : ''}</div></span>
               <b>{l.missing ? '—' : nis(Math.round(l.lineTotal * 10) / 10)}</b>
             </div>
           ))}

@@ -6,7 +6,7 @@ import { kvGet, kvSet, store } from './db.ts';
 import { advanceDays, nowIso, uid } from './clock.ts';
 import { completeOnboarding, estimateStock, getConcept, learnFromQtyFeedback, nextShopInDays, updateNeed, type OnboardingInput } from './state.ts';
 import { CONCEPTS, stapleGroupOf } from './catalog.ts';
-import { findConcepts, parseMessage } from './chat/parser.ts';
+import { parseMessage, staplesFromText } from './chat/parser.ts';
 import { addressKey, recordDelivery } from './cart/delivery.ts';
 import { ACTION_ORDER } from './chat/actions.ts';
 import { executeActions, executeCommand } from './chat/execute.ts';
@@ -90,16 +90,16 @@ app.get('/api/stores/:chainId', wrap(async (req) => {
 app.post('/api/onboarding', wrap((req) => {
   const input = req.body as OnboardingInput;
   // "יש עוד משהו שאתה תמיד מתעצבן כשנגמר?" — known products become staples, anything else a custom one.
-  for (const part of (input.annoyText ?? '').split(/[,،\n]|\s+ו(?=\S{2})|\s+וגם\s+/).map((x) => x.trim()).filter(Boolean)) {
-    if (/^(לא|אין|שום דבר|כלום|לא יודע|אין משהו|-)$/.test(part) || /(^|\s)(לא|בלי|אין)\s/.test(part)) continue; // "לא", "לא חלב" — not a staple
-    const found = findConcepts(part);
-    if (found.length) { for (const m of found) if (input.stapleLevels?.[m.concept.id] !== 'no') input.stapleLevels = { ...(input.stapleLevels ?? {}), [m.concept.id]: 'always' }; }
-    else if (part.split(/\s+/).length <= 3) input.customStaples = [...(input.customStaples ?? []), { label: part, level: 'always' }];
-  }
+  const said = staplesFromText(input.annoyText ?? '');
+  for (const id of said.ids) if (input.stapleLevels?.[id] !== 'no') input.stapleLevels = { ...(input.stapleLevels ?? {}), [id]: 'always' };
+  for (const label of said.custom) input.customStaples = [...(input.customStaples ?? []), { label, level: 'always' }];
+  const skippedStaples = !Object.values(input.stapleLevels ?? {}).some((l) => l !== 'no') && !(input.customStaples ?? []).length && !(input.staples ?? []).length;
   completeOnboarding({ ...input, deliveryStatus: kvGet('deliveryStatus') ?? undefined });
   const welcome: ChatMessage = {
     id: uid('m_'), role: 'assistant', createdAt: nowIso(),
-    text: 'אני כבר יודע את הבסיס.\nרוצה שאנסה לבנות את הקנייה הראשונה שלכם?',
+    text: skippedStaples
+      ? 'התחלתי מרשימת בסיס של מוצרים שרוב הבתים קונים — תורידו מהסל מה שלא מתאים ואלמד.\nרוצה שאנסה לבנות את הקנייה הראשונה שלכם?'
+      : 'אני כבר יודע את הבסיס.\nרוצה שאנסה לבנות את הקנייה הראשונה שלכם?',
     components: [{ type: 'quick_replies', options: [{ label: 'בנה קנייה', send: '#build 14' }, { label: 'קודם נראה מבצעים', send: '#deals' }] }],
   };
   store.addChat(welcome);
@@ -195,7 +195,11 @@ app.get('/api/deals', wrap(() => svc.getDeals()));
 app.post('/api/deals/dismiss', wrap((req) => { svc.dismissDeal(req.body.dealId, req.body.needId); return { ok: true }; }));
 app.post('/api/deals/always', wrap((req) => { updateNeed(req.body.needId, { dealSensitivity: 'high' }, 'תמיד תראה לי אם זול'); return { ok: true }; }));
 
-app.get('/api/compare', wrap(() => store.comparison()));
+// Only the comparison of the basket as it is now — a stale one (items added/removed since) is never shown.
+app.get('/api/compare', wrap(() => {
+  const c = store.comparison(), b = store.basket();
+  return c && b && b.status === 'building' && c.basketKey === svc.basketKey(b) ? c : null;
+}));
 app.post('/api/compare', wrap(async () => {
   const b = store.basket();
   if (!b || b.status !== 'building' || !b.items.length) throw new Error('אין סל פעיל');

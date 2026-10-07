@@ -39,7 +39,7 @@ export type InsightsReport = {
   nextShop: Insight;
   weekday: Insight;
 };
-export type InsightQuestion = 'spend_month' | 'top_category' | 'savings' | 'when_shop' | 'fastest' | 'overbuy' | 'cheap_day' | 'lasts';
+export type InsightQuestion = 'spend_month' | 'spend_last_month' | 'last_shop' | 'top_category' | 'savings' | 'when_shop' | 'fastest' | 'overbuy' | 'cheap_day' | 'lasts';
 
 // ---------- date helpers (Asia/Jerusalem buckets) ----------
 
@@ -272,7 +272,7 @@ export function rhythm(i: InsightsInput): Insight[] {
     out.push(ins('interval', `אתם קונים בממוצע כל ${Math.round(m)} ימים`, 'observed', { value: round1(m), basis: `${days.length} קניות` }));
   } else if (days.length === 2) {
     const g = daysBetweenLocal(days[0], days[1]);
-    out.push(ins('interval', `בין שתי הקניות עברו ${g} ימים`, 'estimated', { value: g, basis: 'רק שתי קניות — עדיין לא קצב' }));
+    out.push(ins('interval', `בין שתי הקניות עברו ${g} ימים (עדיין לא קצב — רק שתי קניות)`, 'observed', { value: g, basis: 'רק שתי קניות — עדיין לא קצב' }));
   } else {
     out.push(ins('interval', 'עדיין אין מספיק קניות כדי לדעת כל כמה זמן אתם קונים', 'insufficient'));
   }
@@ -567,7 +567,7 @@ export function weekdayPattern(i: InsightsInput): Insight {
   const richWds = [0, 1, 2, 3, 4, 5, 6].filter((wd) => datesPerWd(wd) >= 2);
 
   if (weeks.size < 4 || richWds.length < 3) {
-    const why = weeks.size < 4 ? `יש מחירים מ־${weeks.size} שבועות, צריך לפחות 4` : 'צריך מחירים מלפחות שלושה ימים שונים בשבוע, כל אחד לפחות פעמיים';
+    const why = weeks.size < 4 ? (weeks.size === 0 ? 'עוד אין מחירים שמורים' : weeks.size === 1 ? 'יש מחירים משבוע אחד בלבד' : `יש מחירים מ־${weeks.size} שבועות`) + ', צריך לפחות 4' : 'צריך מחירים מלפחות שלושה ימים שונים בשבוע, כל אחד לפחות פעמיים';
     return ins('cheap_day', `עדיין אין מספיק היסטוריה כדי לדעת אם יש יום קבוע זול יותר (${why}). ${PRICE_NOTE}.`, 'insufficient', { value: weeks.size });
   }
 
@@ -638,7 +638,7 @@ export function recommendNextShop(i: InsightsInput): Insight {
   } else if (rec === today) {
     parts.push(`${intro}. כדאי לעשות את הקנייה כבר היום.`);
   } else {
-    parts.push(`${intro}. הייתי עושה את הקנייה עד ${dayName(rec)} (${ddmm(rec)}).`);
+    parts.push(rec === base ? `${intro} — הייתי עושה את הקנייה עד אז.` : `${intro}. הייתי עושה את הקנייה עד ${dayName(rec)} (${ddmm(rec)}).`);
   }
   if (dep.basis === 'stock' && dep.drivers.length) {
     parts.push(`${dep.drivers.length === 1 ? 'הראשון להיגמר כנראה' : 'הראשונים להיגמר כנראה'}: ${dep.drivers.join(', ')}.`);
@@ -700,6 +700,19 @@ export function answer(q: InsightQuestion, r: InsightsReport, i: InsightsInput, 
       const pick = ['month_spend', 'last_month', 'monthly_avg'];
       const xs = r.spending.filter((x) => pick.includes(x.kind) && !(x.kind === 'monthly_avg' && x.confidence === 'insufficient' && !i.purchases.length));
       return join(xs);
+    }
+    case 'spend_last_month': {
+      const ps = sortedPurchases(i);
+      const lm = prevMonth(monthKey(localDate(i.now)));
+      const inLm = ps.filter((p) => monthKey(localDate(p.createdAt)) === lm);
+      if (!inLm.length) return ps.length && monthKey(localDate(ps[0].createdAt)) > lm ? 'בחודש שעבר עוד לא רשמתם קניות בקניתי — אין לי נתון עליו' : 'לא נרשמו קניות בחודש שעבר';
+      const sum = inLm.reduce((s, p) => s + p.total, 0);
+      const partial = monthKey(localDate(ps[0].createdAt)) === lm && localDate(ps[0].createdAt).slice(8) !== '01';
+      return `בחודש שעבר (${lm.slice(5)}/${lm.slice(0, 4)}) נרשמו ${inLm.length === 1 ? 'קנייה אחת' : `${inLm.length} קניות`} — ${nis(sum)}${partial ? ` (רק מאז ${ddmm(localDate(ps[0].createdAt))}, כשהתחלתם לרשום)` : ''}`;
+    }
+    case 'last_shop': {
+      const x = r.spending.find((y) => y.kind === 'last_shop');
+      return x ? say(x) : 'עדיין לא נרשמו קניות';
     }
     case 'top_category': {
       const rows = r.categories.rows.slice(0, 3);

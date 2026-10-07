@@ -3,8 +3,9 @@ import type { Comparison } from '../../shared/types.ts';
 import type { Ctx } from '../App.tsx';
 import { api } from '../api.ts';
 import { nis } from '../components/ChatParts.tsx';
+import { productLine } from '../../shared/product.ts';
 
-type Row = { needId: string; label: string; emoji: string; quantity: number; unit: string; productName?: string; price?: number; on: boolean };
+type Row = { needId: string; label: string; emoji: string; quantity: number; unit: string; productName?: string; brand?: string; sizeText?: string; byWeight?: boolean; price?: number; on: boolean };
 
 export function ConfirmSheet({ ctx, onClose }: { ctx: Ctx; onClose: () => void }) {
   const { state, setState, toast, go } = ctx;
@@ -32,10 +33,12 @@ export function ConfirmSheet({ ctx, onClose }: { ctx: Ctx; onClose: () => void }
     const fromCart = seed && seed.providerId === storeId ? seed : null;
     setRows(b.items.filter((i) => i.accepted && i.condition?.met !== false).map((i) => {
       const s = fromCart?.items.find((x) => x.needId === i.needId);
-      if (fromCart) return { needId: i.needId, label: i.label, emoji: i.emoji, quantity: s?.quantity ?? i.quantity, unit: i.unit, productName: s?.productName ?? i.product?.name, price: s?.price ?? i.product?.price, on: !!s };
+      const ident = { brand: i.product?.brand, sizeText: i.product?.sizeText, byWeight: i.product?.byWeight };
+      if (fromCart) return { needId: i.needId, label: i.label, emoji: i.emoji, quantity: s?.quantity ?? i.quantity, unit: i.unit, productName: s?.productName ?? i.product?.name, ...(s?.productName && s.productName !== i.product?.name ? {} : ident), price: s?.price ?? i.product?.price, on: !!s };
       const line = quote?.lines.find((l) => l.needId === i.needId && !l.missing);
       const price = line ? line.lineTotal / line.quantity : i.product?.price;
-      return { needId: i.needId, label: i.label, emoji: i.emoji, quantity: i.quantity, unit: i.unit, productName: line?.product?.name ?? i.product?.name, price, on: !line && quote ? false : true };
+      const p = line?.product ?? i.product;
+      return { needId: i.needId, label: i.label, emoji: i.emoji, quantity: i.quantity, unit: i.unit, productName: p?.name, brand: p?.brand, sizeText: p?.sizeText, byWeight: p?.byWeight, price, on: !line && quote ? false : true };
     }));
   }, [b, quote, seed, storeId]);
 
@@ -80,7 +83,7 @@ export function ConfirmSheet({ ctx, onClose }: { ctx: Ctx; onClose: () => void }
                 <div className="spread" key={r.needId} style={{ opacity: r.on ? 1 : 0.45 }}>
                   <button className="row grow" style={{ textAlign: 'start' }} onClick={() => setRows(rows.map((x, j) => (j === idx ? { ...x, on: !x.on } : x)))}>
                     <span className={`tick ${r.on ? 'on' : ''}`}>{r.on ? '✓' : ''}</span>
-                    <span>{r.emoji} {r.label}</span>
+                    <span>{r.emoji} {r.label}{r.productName && <div className="faint">{productLine({ name: r.productName, brand: r.brand, sizeText: r.sizeText, byWeight: r.byWeight })}{r.price ? ` · ${nis(r.price)}${r.byWeight ? ' לק״ג' : ''}` : ''}</div>}</span>
                   </button>
                   <div className="qty">
                     <button onClick={() => setRows(rows.map((x, j) => (j === idx ? { ...x, quantity: Math.max(0, x.quantity - 1), on: x.quantity - 1 > 0 } : x)))}>−</button>

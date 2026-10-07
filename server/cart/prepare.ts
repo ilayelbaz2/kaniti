@@ -250,7 +250,7 @@ function finish(job: CartJob, cartUrl: string, cart: CartReadback | null, delive
   const itemCount = cart?.itemCount ?? cart?.lines.length;
   const extra = itemCount !== undefined ? itemCount - added : 0; // things that were already in the site's cart
   const base = status === 'ready' ? `העגלה מוכנה ב${job.providerName} 🎯 — כל ${added} הפריטים נמצאים בעגלה באתר`
-    : status === 'partial' ? (unverified && !added ? `שלחתי ${unverified} פריטים לאתר, אבל לא הצלחתי לוודא שהם בעגלה — בדקו אותה` : `לא הצלחתי להכין את כל העגלה — ${added}/${job.lines.length} פריטים נמצאים בעגלה באתר${unverified ? `, ${unverified} לא אומתו` : ''}`)
+    : status === 'partial' ? (unverified && !added ? `שלחתי ${unverified} פריטים לאתר, אבל לא הצלחתי לוודא שהם בעגלה — בדקו אותה` : `${added}/${job.lines.length} פריטים נמצאים בעגלה באתר${unverified ? `, ${unverified} לא אומתו` : ''}`)
       : `לא הצלחתי להכניס פריטים לעגלה ב${job.providerName}.`;
   save(job, {
     status, cartUrl, cartTotal: cart?.total, cartItemCount: itemCount, deliveryWindow, preexistingItems: extra > 0 ? extra : undefined, userAction: undefined,

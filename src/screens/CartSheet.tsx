@@ -81,7 +81,7 @@ export function CartSheet({ ctx, providerId, verifyOnly, onClose }: { ctx: Ctx; 
                   <DeliveryFacts d={job.delivery} fee={job.deliveryFee} feeEstimated={job.deliveryFeeEstimated} window={job.deliveryWindow} />
                   <div className="spread"><span className="muted">בעגלה באתר</span><b>{added.length}/{job.lines.length} פריטים{job.cartVerified ? ' ✓ נבדק' : ''}</b></div>
                   {job.substitutions > 0 && <div className="spread"><span className="muted">תחליפים</span><b>{job.substitutions}</b></div>}
-                  <div className="spread"><span className="muted">סה״כ{job.cartTotal !== undefined ? ' (לפי העגלה באתר)' : ' (הערכה)'}</span><b className="big-num" style={{ fontSize: 22 }}>{job.cartTotal !== undefined ? nis(Math.round(total * 10) / 10) : `~${nis(Math.round(total))}`}</b></div>
+                  <div className="spread"><span className="muted">סה״כ{job.cartTotal !== undefined ? ' (לפי העגלה באתר — משלוח נקבע בקופה)' : ' (הערכה, כולל משלוח)'}</span><b className="big-num" style={{ fontSize: 22 }}>{job.cartTotal !== undefined ? nis(Math.round(total * 10) / 10) : `~${nis(Math.round(total))}`}</b></div>
                 </div>
                 {job.delivery?.deliveryStatus !== 'confirmed' && <div className="banner warn">משלוח לכתובת שלכם לא אומת באתר. בדקו את הכתובת והמשלוח בעגלה לפני התשלום.</div>}
                 <details className="card" open={notAdded.length + unverified.length > 0}>

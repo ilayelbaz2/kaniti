@@ -43,6 +43,7 @@ export type HouseholdNeed = {
   lastPurchasedQty?: number; // stock units
   lastProductName?: string;
   neverSuggest?: boolean;
+  variant?: string; // "1%", "במים", "ללא לקטוז" — the product name must say it (said by the household)
   staple?: 'always' | 'sometimes'; // "don't want to run out" — separate from how often it is bought
   removedCount: number; // removed from generated baskets (learning)
   dismissedDeals: number;
@@ -131,7 +132,7 @@ export type LearningEvent = {
 
 export type PurchaseItem = {
   needId: string; label: string; emoji: string; quantity: number; unit: string; productName?: string; price?: number; status: BasketStatus;
-  brand?: string; sizeText?: string; providerId?: string; productId?: string;
+  brand?: string; sizeText?: string; byWeight?: boolean; providerId?: string; productId?: string;
   regularPrice?: number; promoMinQty?: number; promoEndsAt?: string; // promo actually used
   usualProductName?: string; usualPrice?: number; // substitution vs the usual product (same scan)
   stockBefore?: number; // estimated stock units at purchase time

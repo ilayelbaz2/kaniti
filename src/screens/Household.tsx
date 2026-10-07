@@ -170,7 +170,7 @@ function History() {
           <div className="row wrap small">{p.dealsUsed > 0 && <span>🔥 {p.dealsUsed} מבצעים נוצלו</span>}{p.substitutions > 0 && <span>↔ {p.substitutions} תחליפים</span>}</div>
           <button className="link" style={{ alignSelf: 'flex-start' }} onClick={() => setOpen(open === p.id ? null : p.id)}>{open === p.id ? 'סגור' : 'פתח'}</button>
           {open === p.id && p.items.map((i) => (
-            <div className="price-row" key={i.needId}><span>{i.emoji} {i.label} × {i.quantity}<div className="faint">{i.productName ? productLine({ name: i.productName, brand: i.brand, sizeText: i.sizeText }) : ''}{i.price ? ` · ₪${i.price}` : ''}</div></span>{i.status === 'opportunity' && <span className="tag opportunity">סטוק</span>}</div>
+            <div className="price-row" key={i.needId}><span>{i.emoji} {i.label} × {i.quantity}<div className="faint">{i.productName ? productLine({ name: i.productName, brand: i.brand, sizeText: i.sizeText, byWeight: i.byWeight }) : ''}{i.price ? ` · ${nis(i.price)}${i.byWeight || /לק"?ג|לק״ג/.test(i.sizeText ?? '') ? ' לק״ג' : ''}` : ''}</div></span>{i.status === 'opportunity' && <span className="tag opportunity">סטוק</span>}</div>
           ))}
           {idx === 0 && <QtyFeedback p={p} onChange={(np) => setList(list.map((x) => (x.id === np.id ? np : x)))} />}
         </div>

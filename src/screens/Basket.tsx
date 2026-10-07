@@ -40,7 +40,7 @@ export function BasketScreen({ ctx }: { ctx: Ctx }) {
 
   const active = b.items.filter((i) => i.accepted && i.condition?.met !== false);
   const total = Math.round(active.reduce((s, i) => s + (i.product?.price ?? 0) * i.quantity, 0));
-  const deals = b.items.filter((i) => i.status === 'opportunity').length;
+  const deals = active.filter((i) => i.product?.promoText).length; // anything bought at a promotion price, however it got here
   const sugg = b.items.filter((i) => i.status === 'discovery' && !i.accepted).length;
   const shown = b.items.filter((i) => filter === 'all' || i.status === filter);
   const subs = b.items.filter((i) => i.usualProductName);
@@ -49,10 +49,10 @@ export function BasketScreen({ ctx }: { ctx: Ctx }) {
     <div className="screen" style={{ paddingBottom: 'calc(var(--nav-h) + 96px)' }}>
       <div className="sum-head">
         <div className="spread"><h1>הסל שלי</h1>{b.priced && <span className="big-num">~{nis(total)}</span>}</div>
-        <div className="muted small" style={{ margin: '4px 0 10px' }}>{active.length} פריטים · {deals} מבצעים · {sugg} הצעות</div>
+        <div className="muted small" style={{ margin: '4px 0 10px' }}>{active.length === 1 ? 'פריט אחד' : `${active.length} פריטים`}{deals ? ` · ${deals === 1 ? 'אחד במבצע' : `${deals} במבצע`}` : ''}{sugg ? ` · ${sugg === 1 ? 'הצעה אחת' : `${sugg} הצעות`}` : ''}</div>
         <button className="btn ghost block" style={{ marginBottom: 8 }} onClick={() => ctx.openAdd()}>＋ הוסף מוצר</button>
         <div className="chips scroll">
-          {([['need', 'הכרחי'], ['opportunity', 'מבצעים'], ['discovery', 'הפתעות'], ['all', 'הכול']] as const).map(([f, l]) => (
+          {([['need', 'הכרחי'], ['opportunity', 'סטוק'], ['discovery', 'הפתעות'], ['all', 'הכול']] as const).map(([f, l]) => (
             <button key={f} className={`chip ${filter === f ? 'on' : ''}`} onClick={() => setFilter(f)}>{l}</button>
           ))}
         </div>

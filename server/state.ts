@@ -75,8 +75,14 @@ export function completeOnboarding(input: OnboardingInput): Household {
     if (label) levels[customConceptFor(label).id] = typeof cs === 'string' ? 'always' : cs.level;
   }
   input.staples = Object.entries(levels).filter(([, l]) => l !== 'no').map(([id]) => id);
-
   const kids = input.children.length;
+  // Skipped the staples step: start from a basic list (active, not claimed as "always") instead of an empty first basket.
+  if (!input.staples.length) {
+    input.staples = allConcepts().filter((c) => c.staple && levels[c.id] !== 'no' && (!c.kidItem || kids > 0) && !(input.vegetarian && (c.meat || c.category === 'fish'))
+      && !(c.dairy && input.dairyAllergy && !kidsOnly) && !(kidsOnly && c.id === 'KIDS_DAIRY')).map((c) => c.id);
+    if (kidsOnly && kids > 0) input.staples.push('DAIRY_FREE_DESSERT');
+  }
+
   for (const concept of allConcepts()) {
     const answer = input.flex[concept.id as keyof OnboardingInput['flex']];
     const n: HouseholdNeed = store.need(concept.id) ?? newNeed(concept, input.adults, kids);
@@ -195,14 +201,21 @@ export function setStock(needId: string, qty: number, confidence: number, raw?: 
   return n;
 }
 
+export const FUZZY_CONF = 0.5;
+/** In words, for stock that came from a word ("יש הרבה") or has decayed — no invented counts. */
+export function stockWords(qty: number, typical14: number): string {
+  return qty <= 0.05 ? 'נגמר' : qty >= typical14 * 1.2 ? 'יש הרבה' : qty <= typical14 * 0.3 ? 'נשאר מעט' : 'יש עוד קצת';
+}
+
 /** Turns fuzzy amounts ("הרבה", "קצת") into stock units relative to consumption. */
 export function fuzzyStock(n: HouseholdNeed, level: 'none' | 'little' | 'some' | 'lots'): { qty: number; confidence: number } {
   const t = n.typical14DayQty;
   switch (level) {
     case 'none': return { qty: 0, confidence: 0.95 };
-    case 'little': return { qty: t * 0.25, confidence: 0.7 };
-    case 'some': return { qty: t * 0.7, confidence: 0.6 };
-    case 'lots': return { qty: t * 1.6, confidence: 0.75 };
+    // A word, not a count: enough to plan with (no check-in question), never shown or learned from as a number.
+    case 'little': return { qty: t * 0.25, confidence: FUZZY_CONF };
+    case 'some': return { qty: t * 0.7, confidence: FUZZY_CONF };
+    case 'lots': return { qty: t * 1.6, confidence: FUZZY_CONF };
   }
 }
 

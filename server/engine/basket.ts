@@ -5,7 +5,7 @@ import type { Concept } from '../catalog.ts';
 import { round1 } from '../catalog.ts';
 import { store } from '../db.ts';
 import { daysBetween, now, nowIso, uid } from '../clock.ts';
-import { allConcepts, dealSensitivityFor, estimateStock, getConcept, newNeed } from '../state.ts';
+import { allConcepts, dealSensitivityFor, estimateStock, getConcept, newNeed, stockWords } from '../state.ts';
 import { brandOf, chooseProduct, effPrice, headMatch, relevant } from './match.ts';
 
 export type PriceBook = {
@@ -310,7 +310,8 @@ export function explainItem(needId: string, basket: Basket | null): string {
   const skippedIt = basket?.skipped.find((s) => s.needId === needId);
   lines.push(`${c.emoji} ${c.label}: אתם צורכים ${per14Text(n.typical14DayQty, c.stockUnit)}${n.qtySource === 'learned' ? ' (למדתי מהקניות שלכם)' : n.qtySource === 'default' ? ' (הערכה ראשונית לפי גודל הבית)' : ''}.`);
   lines.push(est.known
-    ? `לפי ההערכה נשארו ${qtyText(est.qty, c.stockUnit)} (ביטחון ${est.confidence > 0.6 ? 'גבוה' : est.confidence > 0.3 ? 'בינוני' : 'נמוך'}).`
+    ? est.confidence > 0.6 ? `לפי ההערכה נשארו ${qtyText(est.qty, c.stockUnit)} (לפי מספר שאמרתם, ביטחון גבוה).`
+      : `לפי ההערכה: ${stockWords(est.qty, n.typical14DayQty)} (${est.confidence > 0.3 ? 'לפי מה שסיפרתם, בלי ספירה' : 'ניחוש — עבר זמן מאז שעדכנתם'}).`
     : 'אין לי מידע על המלאי בבית, אז הנחתי שנשאר מעט.');
   if (it) {
     const units = it.quantity * c.packSize;

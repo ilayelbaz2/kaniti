@@ -92,7 +92,7 @@ test('3: multiple shops — rhythm and monthly spending', () => {
 
   // Two shops → single gap, estimated
   const two = rhythm(input({ purchases: ps.slice(0, 2) }));
-  assert.equal(kind(two, 'interval').confidence, 'estimated');
+  assert.equal(kind(two, 'interval').confidence, 'observed', 'a measured gap is a fact, labelled as not yet a rhythm');
   assert.match(kind(two, 'interval').text, /בין שתי הקניות עברו 14 ימים/);
 });
 
@@ -373,4 +373,13 @@ test('answer() with data', () => {
   assert.match(answer('fastest', r, i), /הכי מהר/);
   assert.equal(answer('overbuy', r, i), 'לא ראיתי משהו שאתם קונים יותר מדי');
   assert.match(answer('spend_month', r, i), /₪100/);
+});
+
+test('answer(): last month and last shop are answered for what was asked', () => {
+  const ps = [purchase('2026-09-10', 300), purchase('2026-09-24', 250), purchase('2026-10-02', 380)];
+  const i = input({ purchases: ps });
+  const r = buildInsights(i);
+  assert.match(answer('spend_last_month', r, i), /בחודש שעבר \(09\/2026\) נרשמו 2 קניות — ₪550/);
+  assert.match(answer('last_shop', r, i), /₪380/);
+  assert.match(answer('spend_last_month', buildInsights(input()), input()), /לא נרשמו/);
 });
