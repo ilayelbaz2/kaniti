@@ -95,6 +95,18 @@ const CASES: [string, string, Record<string, unknown>, Partial<Ctx>?][] = [
   // A question about stock is answered, never recorded.
   ['יש לנו חלב?', 'showStock', { needId: 'MILK' }],
   ['חלב נגמר?', 'showStock', { needId: 'MILK' }],
+  // Variants and "only" are never dropped (UX review).
+  ['חלב רק 1%', 'updatePreference', { needId: 'MILK', variant: '1%' }],
+  ['תוסיף 2 חלב 1%', 'addBasketItem', { needId: 'MILK', variant: '1%', quantity: 2 }],
+  ['אני לא רוצה טונה בשמן, רק במים', 'addBasketItem', { needId: 'TUNA', variant: 'במים' }],
+  ['טונה במים זולה?', 'searchProductPrices', { needId: 'TUNA', variant: 'במים' }],
+  ['תביא גבינה צהובה של תנובה בלבד', 'updatePreference', { needId: 'YELLOW_CHEESE', flexibility: 'exact_product', preferredBrands: ['תנובה'] }],
+  ['תביא גבינה צהובה של תנובה בלבד', 'addBasketItem', { needId: 'YELLOW_CHEESE' }],
+  ['יש מבצע על שמן זית?', 'searchPromotions', { needId: 'OLIVE_OIL' }],
+  ['נגמר חלב 1%', 'updateHouseholdStock', { needId: 'MILK', level: 'none' }],
+  ['כמה הוצאנו בחודש שעבר?', 'askInsight', { q: 'spend_last_month' }],
+  ['כמה עלתה הקנייה האחרונה?', 'askInsight', { q: 'last_shop' }],
+  ['תעשה לי קנייה של שבוע', 'generateBasket', { horizonDays: 7 }],
 ];
 
 const NEVER: [string, string[]][] = [
@@ -105,6 +117,9 @@ const NEVER: [string, string[]][] = [
   ['אל תקנה יותר במבה השבוע', ['updatePreference']],
   ['יש לנו חלב?', ['updateHouseholdStock']],
   ['חלב נגמר?', ['updateHouseholdStock']],
+  ['חלב רק 1%', ['updateBasketQuantity', 'addBasketItem']],
+  ['אני לא רוצה טונה בשמן, רק במים', ['removeBasketItem', 'clarify']],
+  ['יש מבצע על שמן זית?', ['clarify']],
 ];
 for (const [input, banned] of NEVER) {
   test(`never misread: ${input}`, () => {
@@ -136,4 +151,16 @@ test('a temporary skip never becomes a permanent preference; a conditional add n
 test('unclear input asks one useful question instead of failing', () => {
   const acts = parseMessage('נו?', { at: new Date().toISOString(), focusNeedId: 'TUNA' });
   assert.equal(acts[0].type, 'clarify');
+});
+
+test('a household variant is enforced by matching: "1%" milk never picks 3%', async () => {
+  const { relevant } = await import('../server/engine/match.ts');
+  const { getConcept, ensureNeed } = await import('../server/state.ts');
+  const milk = getConcept('MILK');
+  const need = { ...ensureNeed('MILK'), variant: '1%' };
+  const p = (name: string) => ({ providerId: 'x', productId: name, name, price: 6, available: true, source: 'live' as const, fetchedAt: '' });
+  assert.equal(relevant(milk, need, p('חלב תנובה 1 % שומן קרטון 1 ליטר')), true);
+  assert.equal(relevant(milk, need, p('חלב תנובה 3% קרטון 1 ליטר')), false);
+  const oil = getConcept('OIL');
+  assert.equal(relevant(oil, null, p('שמן זית כתית מעולה 750 מ"ל')), false, 'olive oil is its own product, not canola');
 });

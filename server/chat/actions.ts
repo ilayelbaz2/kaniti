@@ -2,15 +2,15 @@
 import type { Flexibility, Level } from '../../shared/types.ts';
 
 export type StockLevel = 'none' | 'little' | 'some' | 'lots';
-export type InsightQuestion = 'spend_month' | 'top_category' | 'savings' | 'when_shop' | 'fastest' | 'overbuy' | 'cheap_day' | 'lasts';
+export type InsightQuestion = 'spend_month' | 'spend_last_month' | 'last_shop' | 'top_category' | 'savings' | 'when_shop' | 'fastest' | 'overbuy' | 'cheap_day' | 'lasts';
 
 export type Action =
   | { type: 'updateHouseholdStock'; needId: string; qty?: number; level?: StockLevel; raw?: string }
-  | { type: 'updatePreference'; needId: string | 'FOCUS'; flexibility?: Flexibility; preferredBrands?: string[]; forbiddenBrands?: string[]; addForbiddenBrand?: string; neverSuggest?: boolean; active?: boolean; dealSensitivity?: Level; dislikeCurrent?: boolean; statement: string }
+  | { type: 'updatePreference'; needId: string | 'FOCUS'; flexibility?: Flexibility; preferredBrands?: string[]; forbiddenBrands?: string[]; addForbiddenBrand?: string; neverSuggest?: boolean; active?: boolean; dealSensitivity?: Level; dislikeCurrent?: boolean; variant?: string; statement: string }
   /** query = free text when there's no known need (e.g. "חרדל"); category/subGroup for "איזה דג זול". */
-  | { type: 'searchProductPrices'; needId?: string; query: string; category?: string; subGroup?: string }
-  | { type: 'searchPromotions'; needId?: string; query?: string; stockUp?: boolean }
-  | { type: 'addBasketItem'; needId?: string; newLabel?: string; quantity?: number; conditional?: 'good_price'; force?: boolean }
+  | { type: 'searchProductPrices'; needId?: string; variant?: string; query: string; category?: string; subGroup?: string }
+  | { type: 'searchPromotions'; needId?: string; variant?: string; query?: string; stockUp?: boolean }
+  | { type: 'addBasketItem'; needId?: string; variant?: string; newLabel?: string; quantity?: number; conditional?: 'good_price'; force?: boolean }
   | { type: 'removeBasketItem'; needId: string; temporary: boolean }
   | { type: 'replaceBasketItem'; needId: string }
   | { type: 'updateBasketQuantity'; needId: string; quantity?: number; delta?: number }

@@ -82,6 +82,8 @@ export function findConcepts(text: string): Mention[] {
       const after = t[end] ?? ' ';
       if (i > 0 && !(syn.length > 2 ? /(^|\s)[והבלמשכ]{0,2}$/ : /(^|\s)[וה]?$/).test(before)) continue;
       if (/[א-תa-z]/.test(after) && !/^(ים|ות|ה|י|ת)(\s|$|[.,!?])/.test(t.slice(end, end + 4))) continue;
+      if (syn === 'נייר' && /^\s*(אפייה|אפיה|כסף|אלומיניום|עטיפה|פרגמנט|סופג|מטבח)/.test(t.slice(end))) continue; // נייר אפייה ≠ toilet paper
+      if (concept.id === 'OIL' && /ב$/.test(before)) continue; // "טונה בשמן" is a kind of tuna, not oil
       if (taken.some(([a, b]) => i < b && end > a)) continue;
       taken.push([i, end]);
       if (!out.some((m) => m.concept.id === concept.id)) out.push({ concept, start: i, end });
@@ -92,6 +94,24 @@ export function findConcepts(text: string): Mention[] {
     if (brand) m.brand = brand;
   }
   return out.sort((a, b) => a.start - b.start);
+}
+
+/** Onboarding's "what annoys you when it runs out?": a known product only when the words are that product
+ *  ("נייר אפייה" is not toilet paper); anything else becomes the household's own item, in their words. */
+export function staplesFromText(text: string): { ids: string[]; custom: string[] } {
+  const ids: string[] = [], custom: string[] = [];
+  for (const raw of text.split(/[,،;\n]|\s+וגם\s+|\s+ו(?=\S{2})/).map((x) => x.trim().replace(/[.!?]+$/, '')).filter(Boolean)) {
+    const part = raw.replace(/^(גם|את|ה)\s*/, '').trim();
+    if (!part || /^(לא|אין|שום דבר|כלום|לא יודע|אין משהו|-)$/.test(part) || /(^|\s)(לא|בלי|אין)\s/.test(part)) continue;
+    const t = normalize(part);
+    const found = findConcepts(t);
+    // Words left over after the product name (other than its brand) mean it's something else.
+    const rest = found.length === 1 ? normalize(t.slice(0, found[0].start) + ' ' + t.slice(found[0].end)).split(' ').filter((w) => w && !STOP.has(w) && !found[0].concept.brands.some((b) => normalize(b).includes(w))) : [];
+    if (found.length === 1 && !rest.length) ids.push(found[0].concept.id);
+    else if (found.length > 1) ids.push(...found.map((m) => m.concept.id));
+    else if (part.split(/\s+/).length <= 3) custom.push(part);
+  }
+  return { ids: [...new Set(ids)], custom: [...new Set(custom)] };
 }
 
 /** Known brands mentioned without (or with) a product: "לא פפסי", "אנחנו אוהבים את בדין". */
@@ -127,10 +147,15 @@ const TEMP = /(הפעם|השבוע|בקנייה הזאת|בקניה הזאת|ב�
 const PERM = /(מעכשיו|מהיום|אף פעם|לעולם|כבר לא|בכלל לא|תפסיק|להבא|מעתה|תמיד)/;
 // "אל תוסיף", "לא רוצה", "לא בא לי", "אין צורך ב", "לא את זה" — the add/want words are negated, so it's never an add.
 const NEG_WANT = /((^|\s)(אל|לא) (ת)?(וסיף|וסיפי|הוסיף|כניס|כניסי|קח|קני|קנה|שים|ביא|זמין)(\s|$)|(^|\s)(אני |אנחנו )?לא (רוצה|רוצים|בא לי|מתחשק לי|צריך|צריכים)(\s|$)|אין צורך|(^|\s)לא (את )?(זה|הזה|הזאת)$)/;
+// A variant the household said out loud — the product name must say it too ("חלב 1%", "טונה במים").
+const VARIANT = /(\d+(?:\.\d+)?\s*%)|(?:^|\s)(במים|בשמן|ללא לקטוז|ללא סוכר|ללא גלוטן|דל שומן|לייט|פרוס|פרוסה)(?=\s|$|,)/;
+const variantOf = (s: string) => { const m = s.match(VARIANT); return m ? (m[1] ?? m[2]).replace(/\s+/g, '') : undefined; };
 const COND = /(^|\s)(רק )?(אם|בתנאי ש)[^]{0,25}?(מבצע|זול|משתל[םמ]|מחיר טוב|הנחה|שווה)/;
 
 const RE = {
   insight: [
+    [/(הוצאנו|הוצאתי|הוצאתם|שילמנו|יצא לנו)[^]*?(בחודש שעבר|בחודש הקודם)|(חודש שעבר|חודש הקודם)[^]*?(הוצאנו|הוצאתי|יצא|שילמנו)/, 'spend_last_month'],
+    [/כמה (עלתה|עלה|יצאה|יצא) (לנו )?ה?(קנייה|קניה|הזמנה) (ה)?(אחרונה|קודמת)|ה?(קנייה|קניה) האחרונה עלתה/, 'last_shop'],
     [/(כמה|מה) (הוצאנו|הוצאתי|הוצאתם|יצא לנו|שילמנו|עלו לנו הקניות)|הוצאות (החודש|שלנו)|כמה כסף (הלך|הוצאנו)/, 'spend_month'],
     [/על מה (אנחנו )?(מוציאים|הולך|הוצאנו)|(איפה|על מה) הולך (לנו )?ה?כסף|הכי הרבה כסף/, 'top_category'],
     [/(כמה|מה) (חסכתי|חסכנו|חסכתם|נחסך)|חיסכון (שלנו|עם)|חסכנו בזכות/, 'savings'],
@@ -152,7 +177,7 @@ const RE = {
   stockList: /(מה חסר|מה יש בבית|מה נשאר|מה כנראה חסר|מה המצב בבית|מה צריך לקנות|מה צריך להזמין)/,
   dealAlert: /(תמיד תראה לי|תגיד לי|תעדכן אותי) (אם|כש)[^]*?(זול|מבצע)/,
   flex: /(אל|לא) ת(י)?נעל|לא (חייב|חייבים|צריך|צריכים) (את ה|ב)?מותג|לא אכפת לי|לא משנה לי|לא חשוב לי|לא מעניין אותי איזה|מה ש(זול|במבצע|משתל[םמ])|כל מותג|לא משנה איזה|כל (\S+ )?(זה |יהיה )?בסדר|לא בררנים/,
-  strictOnly: /(^|\s)(רק|אך ורק)(\s|$)(?!אם|(\d|שני|שתי|שלוש|ארבע))/,
+  strictOnly: /(^|\s)(רק|אך ורק)(\s|$)(?!אם|(\d|שני|שתי|שלוש|ארבע))|(^|\s)בלבד(\s|$)/,
   prefer: /(תמיד )?(תעדיף|מעדיפים|מעדיף|אנחנו אוהבים|אני אוהב|אני אוהבת|תקנה תמיד|הכי אוהבים)/,
   dislike: /(לא אוהב|לא אוהבת|לא אוהבים|לא טעים|לא טובה|לא טוב|מגעיל|לא מתאים לנו)/,
   never: /((אל|לא) ת(ציע|מליץ)(\s|$)|(אל|לא) ת(ציע|מליץ|כניס|קנה)[^]*?(יותר|אף פעם|לעולם|בכלל)|תפסיק (להציע|להכניס|לקנות|לשים)|אנחנו (כבר )?לא קונים|לא קונים (את זה )?בכלל|אף פעם (אל|לא)|לעולם (אל|לא)|(מעכשיו|מהיום|להבא) (בלי|אל|לא)|(^|\s)לא (לקנות|להכניס|להציע|לשים) (יותר(?! מ)|אף פעם|לעולם|בכלל))/,
@@ -205,7 +230,7 @@ function splitClauses(text: string): { t: string; q: boolean }[] {
 
 function horizonFrom(s: string): number {
   if (/שבועיים|14/.test(s)) return 14;
-  if (/לשבוע|שבוע אחד|7 ימים/.test(s)) return 7;
+  if (/לשבוע|של שבוע|שבוע אחד|שבועית|7 ימים/.test(s)) return 7;
   if (/חודש/.test(s)) return 30;
   const m = s.match(/(\d+)\s*ימים/);
   return m ? Math.min(30, Math.max(3, parseInt(m[1]))) : 14;
@@ -220,6 +245,11 @@ export function parseMessage(text: string, ctx: ChatContext | null = null): Acti
   if (cmd) return parseCommand(cmd[1], cmd[2]);
 
   const actions: Action[] = [];
+  // "אני לא רוצה טונה בשמן, רק במים" — one product, a different variant this time (not two products, not a removal).
+  const swap = whole.match(/(?:^|\s)(?:לא|בלי)\s.*?,?\s+(?:רק|אלא|אבל)\s+(.+)$/);
+  const swapVariant = swap ? variantOf(` ${swap[1]}`) : undefined;
+  const swapTarget = swapVariant ? findConcepts(whole).filter((m) => m.concept.id !== 'OIL')[0] : undefined;
+  if (swapVariant && swapTarget) return [{ type: 'addBasketItem', needId: swapTarget.concept.id, variant: swapVariant }];
   for (const { t, q } of splitClauses(text)) actions.push(...parseClause(t, ctx, q));
   if (!actions.length) {
     actions.push(whole.split(' ').length <= 2 && ctx?.focusNeedId
@@ -313,6 +343,20 @@ function parseClause(t: string, ctx: ChatContext | null, question = false): Acti
     if (cond && hasAdd && !RE.remove.test(t)) { out.push({ type: 'addBasketItem', needId: id, quantity: n, conditional: 'good_price' }); continue; }
     if (!temp && (RE.never.test(t) || (perm && (RE.remove.test(t) || neg)))) { out.push({ type: 'updatePreference', needId: id, neverSuggest: true, active: false, statement: t }); continue; }
     if (RE.flex.test(t)) { out.push({ type: 'updatePreference', needId: id, flexibility: 'category_flexible', preferredBrands: [], dealSensitivity: 'high', statement: t }); continue; }
+    // A variant in the sentence ("חלב רק 1%", "יש מבצע על טונה במים?") is part of what they asked — never dropped.
+    const variant = variantOf(m ? `${t.slice(0, m.start)} ${t.slice(m.end)}` : t);
+    if (variant && !neg && !RE.remove.test(t)) {
+      const nv = findNumber((m ? `${t.slice(0, m.start)} ${t.slice(m.end)}` : t).replace(VARIANT, ' '));
+      const stockWords = RE.stockSome.test(t) || RE.stockLittle.test(t) || RE.stockNone.test(t) || RE.stockHave.test(t);
+      if (/(^|\s)(רק|אך ורק|בלבד|תמיד|מעכשיו|מהיום)(\s|$)/.test(t)) {
+        out.push({ type: 'updatePreference', needId: id, variant, statement: t });
+        if (hasAdd) out.push({ type: 'addBasketItem', needId: id, quantity: nv });
+        continue;
+      }
+      if (!hasAdd && RE.promo.test(t)) { out.push({ type: 'searchPromotions', needId: id, variant }); continue; }
+      if (!hasAdd && (RE.price.test(t) || (question && !stockWords))) { out.push({ type: 'searchProductPrices', needId: id, variant, query: m?.concept.query ?? '' }); continue; }
+      if (hasAdd || (!stockWords && !question && t.split(' ').length <= 5)) { out.push({ type: 'addBasketItem', needId: id, variant, quantity: nv }); continue; }
+    }
     if (RE.replace.test(t) && !RE.price.test(t.replace(/משהו אחר|מוצר אחר/, ''))) { out.push({ type: 'replaceBasketItem', needId: id }); continue; }
     if (RE.replace.test(t) && /(יש|תמצא|תביא)/.test(t)) { out.push({ type: 'replaceBasketItem', needId: id }); continue; }
     const qTo = t.match(RE.qtyTo);
@@ -323,10 +367,11 @@ function parseClause(t: string, ctx: ChatContext | null, question = false): Acti
       out.push(temp ? { type: 'setTemporaryInstruction', needId: id, mode: 'skip' } : { type: 'removeBasketItem', needId: id, temporary: true });
       continue;
     }
-    if (RE.strictOnly.test(t) && (m?.brand || /רק /.test(t)) && !hasAdd) {
+    if (RE.strictOnly.test(t) && (m?.brand || /רק /.test(t)) && (!hasAdd || m?.brand)) {
       const c = m?.concept;
       const forbidden = c ? c.brands.filter((b) => b !== m?.brand && new RegExp(`(לא|בלי)\\s+(את\\s+)?(ה)?${normalize(b)}`).test(t)) : [];
       out.push({ type: 'updatePreference', needId: id, flexibility: 'exact_product', preferredBrands: m?.brand ? [m.brand] : undefined, forbiddenBrands: forbidden.length ? forbidden : undefined, active: true, statement: t });
+      if (hasAdd) out.push({ type: 'addBasketItem', needId: id, quantity: n });
       continue;
     }
     if (RE.dislike.test(t)) { out.push({ type: 'updatePreference', needId: id, dislikeCurrent: true, statement: t }); continue; }

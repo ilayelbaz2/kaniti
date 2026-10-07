@@ -39,6 +39,8 @@ export function cheaper(a: ProductSearchResult, b: ProductSearchResult): number 
 
 const norm = (s: string) => s.replace(/["'׳״\-]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 const has = (hay: string, needle: string) => norm(hay).includes(norm(needle));
+/** "1%" matches "חלב 1 % שומן"; words match as words. */
+export const hasVariant = (hay: string, v: string) => norm(hay).replace(/\s+/g, '').includes(norm(v).replace(/\s+/g, ''));
 
 export function brandOf(p: ProductSearchResult, concept: Concept): string | undefined {
   if (p.brand) return p.brand;
@@ -70,6 +72,7 @@ export function relevant(concept: Concept, need: HouseholdNeed | null, p: Produc
   if (concept.alsoInclude?.length && !concept.alsoInclude.some((w) => has(text, w))) return false;
   if (concept.exclude?.some((w) => has(text, w))) return false;
   if (need?.forbiddenBrands.some((b) => has(text, b))) return false;
+  if (need?.variant && !hasVariant(text, need.variant)) return false;
   const own = norm([concept.label, concept.query, ...concept.synonyms, ...(concept.mustInclude ?? [])].join(' '));
   if (words(p.name).some((x) => NOISE.some((n) => (x.startsWith(n) || x.slice(1).startsWith(n)) && !own.includes(n)))) return false;
   if (needsParveCheck(concept, need) && !PARVE_MARKERS.some((m) => has(text, m))) return false;

@@ -4,7 +4,7 @@ import { per14Text, qtyText } from '../../shared/product.ts';
 import type { ChatComponent, ChatMessage, Flexibility } from '../../shared/types.ts';
 import { store, kvGet, kvSet } from '../db.ts';
 import { nowIso, uid } from '../clock.ts';
-import { allConcepts, ensureNeed, estimateStock, fuzzyStock, getConcept, logEvent, setStock, updateNeed } from '../state.ts';
+import { allConcepts, ensureNeed, estimateStock, fuzzyStock, stockWords, getConcept, logEvent, setStock, updateNeed } from '../state.ts';
 import { checkInQuestions, explainItem, flexText, fmt } from '../engine/basket.ts';
 import { compareBasket, explainStoreChoice } from '../engine/compare.ts';
 import * as svc from '../service.ts';
@@ -71,7 +71,7 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
         else { const f = fuzzyStock(n, a.level ?? 'some'); qty = f.qty; conf = f.confidence; }
         setStock(a.needId, qty, conf, a.raw);
         if (!n.active && qty === 0) updateNeed(a.needId, { active: true });
-        out.changes.push(`${c.emoji} ${c.label}: ${a.level === 'none' || qty === 0 ? 'נגמר' : a.level === 'lots' ? `יש הרבה (${qtyText(qty, c.stockUnit)})` : `${qtyText(qty, c.stockUnit)}`}`);
+        out.changes.push(`${c.emoji} ${c.label}: ${a.level === 'none' || qty === 0 ? 'נגמר' : a.qty !== undefined ? qtyText(qty, c.stockUnit) : `${stockWords(qty, n.typical14DayQty)} (רשמתי כהערכה, לא כמספר)`}`);
         resolvePending(a.needId);
         stateTouched = true;
         break;
@@ -86,6 +86,7 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
         if (a.dealSensitivity) patch.dealSensitivity = a.dealSensitivity;
         if (a.neverSuggest !== undefined) patch.neverSuggest = a.neverSuggest;
         if (a.active !== undefined) patch.active = a.active;
+        if (a.variant) patch.variant = a.variant;
         if (a.dislikeCurrent) {
           const current = store.basket()?.items.find((i) => i.needId === a.needId)?.product;
           const name = current?.name ?? n.lastProductName;
@@ -105,6 +106,7 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
         } else if (a.dealSensitivity) {
           out.changes.push(`${c.emoji} ${c.label}: אראה לכם כשיש מחיר טוב`);
         }
+        if (a.variant) out.changes.push(`${c.emoji} ${c.label}: רק ${a.variant} — קבוע`);
         stateTouched = true;
         break;
       }
@@ -167,6 +169,22 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
             break;
           }
         }
+        if (a.needId && a.variant) {
+          // "תוסיף חלב 1%": this exact variant, this time — found first, never a ✓ on a different product.
+          const c = getConcept(a.needId);
+          const { best, failures } = await svc.variantPick(a.needId, a.variant);
+          if (!best) {
+            out.lines.push(failures.length >= 2 ? `לא הצלחתי לבדוק כרגע (${failures.join(', ')} לא ענו).` : `לא מצאתי ${c.label} ${a.variant} ברשתות שלכם — לא הוספתי כלום.`);
+            out.components.push({ type: 'quick_replies', options: [{ label: `לחפש ${c.label} ${a.variant}`, send: `@open:add:${c.label} ${a.variant}` }, { label: `${c.label} רגיל`, send: `#add ${a.needId}` }] });
+            focusIds.push(a.needId);
+            break;
+          }
+          const { item } = await svc.addItem({ needId: a.needId, quantity: a.quantity, product: { providerId: best.providerId, productId: best.productId } });
+          out.changes.push(`${item.emoji} ${item.label}: ${item.quantity} × ${productLine(best)} · ₪${best.promoPrice ?? best.price} ב${best.providerName}`);
+          focusIds.push(item.needId);
+          basketHandled = true;
+          break;
+        }
         const { item } = await svc.addItem(a);
         const price = item.product ? ` · ${productLine(item.product)} · ₪${item.product.price}${item.product.promoText ? ` (${item.product.promoText})` : ''}` : '';
         if (item.condition) {
@@ -217,8 +235,9 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
       }
       case 'searchProductPrices': {
         if (a.needId) {
-          const r = await svc.priceLookup(a.needId);
-          if (!r.rows.length) out.lines.push(r.failures.length ? `לא הצלחתי לקבל מחירים ל${r.concept.label} (${r.failures.join(', ')} לא זמינות כרגע).` : `לא מצאתי ${r.concept.label} ברשתות שלכם.`);
+          const r = await svc.priceLookup(a.needId, a.variant);
+          const what = `${r.concept.label}${a.variant ? ` ${a.variant}` : ''}`;
+          if (!r.rows.length) out.lines.push(r.failures.length ? `לא הצלחתי לקבל מחירים ל${what} (${r.failures.join(', ')} לא זמינות כרגע).` : `לא מצאתי ${what} ברשתות שלכם.`);
           else {
             out.lines.push(`${r.concept.emoji} הכי זול ${r.concept.label} כרגע: ${r.rows[0].name} ב${r.rows[0].provider} — ₪${r.rows[0].price}`);
             out.components.push({ type: 'prices', title: r.concept.label, rows: r.rows, failures: r.failures });
@@ -258,15 +277,16 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
       }
       case 'searchPromotions': {
         if (a.needId) {
-          const r = await svc.priceLookup(a.needId);
+          const r = await svc.priceLookup(a.needId, a.variant);
+          const what = `${r.concept.label}${a.variant ? ` ${a.variant}` : ''}`;
           const promos = r.rows.filter((x) => x.promoText);
           if (promos.length) {
-            out.lines.push(`יש מבצע על ${r.concept.label}:`);
+            out.lines.push(`יש מבצע על ${what}:`);
             out.components.push({ type: 'prices', title: r.concept.label, rows: promos, failures: r.failures });
             out.components.push({ type: 'quick_replies', options: [{ label: 'תוסיף לסל', send: `#add ${a.needId}` }] });
           } else if (r.rows.length) {
-            out.lines.push(`אין כרגע מבצע על ${r.concept.label}. הכי זול: ${r.rows[0].name} ב${r.rows[0].provider} — ₪${r.rows[0].price}.`);
-          } else out.lines.push(`לא הצלחתי לבדוק את ${r.concept.label} כרגע.`);
+            out.lines.push(`אין כרגע מבצע על ${what}. הכי זול: ${r.rows[0].name} ב${r.rows[0].provider} — ₪${r.rows[0].price}.`);
+          } else out.lines.push(r.failures.length ? `לא הצלחתי לבדוק את ${what} כרגע.` : `לא מצאתי ${what} ברשתות שלכם.`);
         } else if (a.query) {
           const r = await svc.searchProducts(a.query);
           const promos = r.results.filter((x) => x.promoPrice || x.promoText).slice(0, 6);
@@ -335,14 +355,14 @@ export async function executeActions(actions: Action[], extraText?: string): Pro
           const n = store.need(a.needId), c = getConcept(a.needId);
           const e = n ? estimateStock(n) : null;
           if (!n || !e?.known || e.confidence < 0.2) out.lines.push(`אין לי מספיק מידע על ${c.label} בבית. אם תגידו לי ("יש 2" / "נגמר"), אעדכן.`);
-          else out.lines.push(e.qty <= 0.05 ? `לפי ההערכה שלי ${c.label} כנראה נגמר.` : `לפי ההערכה שלי נשאר ${qtyText(e.qty, c.stockUnit)} ${c.label}${e.confidence < 0.5 ? ' (הערכה גסה)' : ''}.`);
+          else out.lines.push(e.qty <= 0.05 ? `לפי ההערכה שלי ${c.label} כנראה נגמר.` : e.confidence <= 0.5 ? `לפי מה שידוע לי: ${c.label} — ${stockWords(e.qty, n.typical14DayQty)} (הערכה, לא ספירה).` : `לפי ההערכה שלי נשאר ${qtyText(e.qty, c.stockUnit)} ${c.label}.`);
           out.components.push({ type: 'quick_replies', options: [{ label: 'נגמר', send: `נגמר ${c.label}` }, { label: 'יש קצת', send: `יש קצת ${c.label}` }, { label: 'יש הרבה', send: `יש הרבה ${c.label}` }] });
           break;
         }
         const rows = store.needs().filter((n) => n.active).map((n) => {
           const c = getConcept(n.id);
           const e = estimateStock(n);
-          const text = !e.known ? 'לא יודע' : e.qty <= 0.01 ? 'נגמר' : e.qty > n.typical14DayQty * 1.2 ? `הרבה (${qtyText(e.qty, c.stockUnit)})` : `${qtyText(e.qty, c.stockUnit)}`;
+          const text = !e.known ? 'לא יודע' : e.qty <= 0.01 ? 'נגמר' : e.confidence <= 0.5 ? `${stockWords(e.qty, n.typical14DayQty)} (הערכה)` : e.qty > n.typical14DayQty * 1.2 ? `הרבה (${qtyText(e.qty, c.stockUnit)})` : `${qtyText(e.qty, c.stockUnit)}`;
           return { needId: n.id, emoji: c.emoji, label: c.label, text, value: e.qty, unit: c.stockUnit, conf: e.confidence };
         }).sort((x, y) => x.value / (store.need(x.needId)!.typical14DayQty || 1) - y.value / (store.need(y.needId)!.typical14DayQty || 1));
         out.lines.push('אני מעריך שנשאר:');
