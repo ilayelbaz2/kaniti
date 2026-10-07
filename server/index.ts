@@ -10,6 +10,7 @@ import { findConcepts, parseMessage } from './chat/parser.ts';
 import { addressKey, recordDelivery } from './cart/delivery.ts';
 import { ACTION_ORDER } from './chat/actions.ts';
 import { executeActions, executeCommand } from './chat/execute.ts';
+import { loadContext } from './chat/context.ts';
 import { interpretWithLlm, llmEnabled } from './chat/llm.ts';
 import * as svc from './service.ts';
 import * as cartJobs from './cart/prepare.ts';
@@ -123,15 +124,18 @@ async function handleChat(text: string): Promise<ChatMessage> {
     if (direct) return direct;
     return executeActions(parseMessage(t));
   }
+  const ctx = loadContext();
   if (llmEnabled()) {
+    // Claude interprets (validated typed actions only); the app computes and words every fact.
     try {
-      const { actions, say } = await interpretWithLlm(t);
-      if (actions.length || say) return executeActions(actions.sort((a, b) => ACTION_ORDER.indexOf(a.type) - ACTION_ORDER.indexOf(b.type)), say);
+      const { actions, say, options } = await interpretWithLlm(t, ctx);
+      if (actions.length) return executeActions(actions.sort((a, b) => ACTION_ORDER.indexOf(a.type) - ACTION_ORDER.indexOf(b.type)));
+      if (say) return executeActions([{ type: 'clarify', question: say, options: (options ?? []).map((o) => ({ label: o, send: o })) }]);
     } catch (e) {
       console.warn('LLM failed, using rule parser:', (e as Error).message);
     }
   }
-  return executeActions(parseMessage(t));
+  return executeActions(parseMessage(t, ctx));
 }
 
 app.post('/api/chat', wrap(async (req) => {
@@ -165,6 +169,7 @@ app.post('/api/basket/add', wrap(async (req) => {
   await svc.addItem({ needId: b.needId, newLabel: b.newLabel ? String(b.newLabel).slice(0, 40) : undefined, quantity: b.quantity !== undefined ? Number(b.quantity) : undefined, conditional: b.conditional, product: b.product });
   return appState();
 }));
+app.get('/api/insights', wrap(() => svc.insights()));
 app.get('/api/products/search', wrap(async (req) => svc.searchProducts(String(req.query.q ?? '').slice(0, 60))));
 
 // ---------- needs / preferences ----------

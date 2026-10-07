@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { BasketItem, ProductSearchResult } from '../../shared/types.ts';
 import type { Ctx } from '../App.tsx';
+import { productLine } from '../../shared/product.ts';
 import { api } from '../api.ts';
 import { nis } from '../components/ChatParts.tsx';
 
@@ -31,6 +32,7 @@ export function BasketScreen({ ctx }: { ctx: Ctx }) {
           <h2>{b?.status === 'purchased' ? 'הקנייה האחרונה אושרה ✓' : 'אין עדיין סל'}</h2>
           <div>{b?.status === 'purchased' ? 'כשתרצו — אבנה את הבאה לפי מה שלמדתי.' : 'אבנה סל לשבועיים לפי מה שאתם צורכים ומה שכנראה חסר.'}</div>
           <button className="btn" onClick={build}>בנה קנייה</button>
+          <button className="btn ghost" onClick={() => ctx.openAdd()}>＋ הוסף מוצר</button>
         </div>
       </div>
     );
@@ -48,6 +50,7 @@ export function BasketScreen({ ctx }: { ctx: Ctx }) {
       <div className="sum-head">
         <div className="spread"><h1>הסל שלי</h1>{b.priced && <span className="big-num">~{nis(total)}</span>}</div>
         <div className="muted small" style={{ margin: '4px 0 10px' }}>{active.length} פריטים · {deals} מבצעים · {sugg} הצעות</div>
+        <button className="btn ghost block" style={{ marginBottom: 8 }} onClick={() => ctx.openAdd()}>＋ הוסף מוצר</button>
         <div className="chips scroll">
           {([['need', 'הכרחי'], ['opportunity', 'מבצעים'], ['discovery', 'הפתעות'], ['all', 'הכול']] as const).map(([f, l]) => (
             <button key={f} className={`chip ${filter === f ? 'on' : ''}`} onClick={() => setFilter(f)}>{l}</button>
@@ -104,7 +107,7 @@ function ItemCard({ item: i, ctx }: { item: BasketItem; ctx: Ctx }) {
               : <span className={`tag ${i.status}`}>{i.status === 'opportunity' ? '🔥 ' : i.status === 'discovery' ? '💡 ' : ''}{STATUS_LABEL[i.status]}</span>}
           </div>
           {i.product ? (
-            <div className="prod">{i.product.name} · <b>{nis(i.product.price)}</b>{i.product.regularPrice && i.product.regularPrice > i.product.price ? <s className="faint"> {nis(i.product.regularPrice)}</s> : null}{i.product.unitPriceText ? ` · ${i.product.unitPriceText}` : ''}{i.lockedByUser ? ' · 🔒' : ''}</div>
+            <div className="prod">{productLine(i.product)} · <b>{nis(i.product.price)}{i.product.byWeight ? ' לק״ג' : ''}</b>{i.product.regularPrice && i.product.regularPrice > i.product.price ? <s className="faint"> {nis(i.product.regularPrice)}</s> : null}{i.product.unitPriceText ? ` · ${i.product.unitPriceText}` : ''}{i.lockedByUser ? ' · 🔒' : ''}</div>
           ) : <div className="prod faint">אין מחיר כרגע</div>}
         </div>
       </div>
@@ -153,7 +156,7 @@ function ItemCard({ item: i, ctx }: { item: BasketItem; ctx: Ctx }) {
               setState(r.state); setAlts(null); setMenu(false);
               if (r.replacements >= 1) setLearn(true);
             })}>
-              <span className="grow small">{p.name}{p.promoText ? <span className="faint"> · {p.promoText}</span> : null}</span>
+              <span className="grow small">{productLine(p)}{p.promoText ? <span className="faint"> · {p.promoText}</span> : null}</span>
               <b>{nis(p.promoPrice ?? p.price)}</b>
             </button>
           ))}
@@ -180,7 +183,7 @@ function SubstitutionCard({ item: i, ctx }: { item: BasketItem; ctx: Ctx }) {
   return (
     <div className="card stack" style={{ borderColor: 'var(--amber)' }}>
       <div className="small">החלפתי הפעם:</div>
-      <b>{i.usualProductName} ← {i.product?.name}</b>
+      <b>{i.usualProductName} ← {i.product ? productLine(i.product) : ''}</b>
       <div className="small muted">אתם גמישים במותג ב{i.label}, ויצא משתלם יותר.</div>
       <div className="row">
         <button className="btn small" onClick={async () => { setState(await api.lock(i.needId, true)); setGone(true); }}>נשמע טוב</button>

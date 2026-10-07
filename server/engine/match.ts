@@ -1,4 +1,5 @@
 // Picks a concrete product for a need, honouring how flexible the household is about it.
+import { identityGaps } from '../../shared/product.ts';
 import type { HouseholdNeed, ProductSearchResult } from '../../shared/types.ts';
 import { PARVE_MARKERS, type Concept } from '../catalog.ts';
 
@@ -105,6 +106,8 @@ export type Choice = { product: ProductSearchResult; substituted: boolean; usual
 export function chooseProduct(concept: Concept, need: HouseholdNeed, candidates: ProductSearchResult[]): Choice {
   const c = choose(concept, need, candidates);
   if (c && !headMatch(concept, c.product) && norm(c.product.name) !== norm(need.lastProductName ?? '')) c.uncertain = true;
+  // Can't tell the user what exactly this is (no brand, no size, not sold by weight) → let them pick, never auto-buy.
+  if (c && identityGaps(c.product).ambiguous && norm(c.product.name) !== norm(need.lastProductName ?? '')) c.uncertain = true;
   return c;
 }
 

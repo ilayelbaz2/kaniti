@@ -13,6 +13,9 @@ async function call<T>(path: string, body?: unknown, method?: string): Promise<T
 
 export type DeliveryResult = { providerId: string; name: string; status?: 'confirmed' | 'unavailable' | 'user_action_required' | 'unknown'; needsLogin?: boolean; addressText?: string; delivers: boolean | null; note: string; deliveryFee?: number; minOrder?: number; checkedLive: boolean };
 export type StoreOption = { storeId: string; name: string; city: string; address?: string };
+export type Confidence = 'observed' | 'estimated' | 'insufficient';
+export type Insight = { id: string; kind: string; text: string; confidence: Confidence; basis?: string; value?: number; needId?: string; date?: string };
+export type InsightsReport = { spending: Insight[]; categories: { rows: { group: string; amount: number; share: number }[]; insight: Insight }; rhythm: Insight[]; consumption: Insight[]; savings: { insights: Insight[]; saved: number; estimated: number; potential: number }; nextShop: Insight; weekday: Insight };
 export type SearchCard = ProductSearchResult & { providerName: string; ambiguous: boolean };
 export type SearchResponse = { query: string; concept?: { id: string; label: string; emoji: string }; results: SearchCard[]; failures: string[] };
 export type CatalogItem = { id: string; label: string; emoji: string; staple: boolean; category: string; group: string; kidItem: boolean; dairy: boolean; meat: boolean };
@@ -38,6 +41,7 @@ export const api = {
   why: (needId: string) => call<{ text: string }>(`/basket/${needId}/why`),
   add: (needId: string, quantity?: number, product?: { providerId: string; productId: string }) => call<AppState>('/basket/add', { needId, quantity, product }),
   addLabel: (newLabel: string, quantity?: number, product?: { providerId: string; productId: string }) => call<AppState>('/basket/add', { newLabel, quantity, product }),
+  insights: () => call<InsightsReport>('/insights'),
   search: (q: string) => call<SearchResponse>(`/products/search?q=${encodeURIComponent(q)}`),
   patchNeed: (id: string, patch: unknown) => call<AppState>(`/needs/${id}`, patch, 'PATCH'),
   setStock: (id: string, qty: number) => call<AppState>(`/needs/${id}/stock`, { qty }),

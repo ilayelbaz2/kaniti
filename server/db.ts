@@ -111,6 +111,6 @@ export const store = {
   },
 
   reset() {
-    db.exec('DELETE FROM kv; DELETE FROM needs; DELETE FROM custom_concepts; DELETE FROM events; DELETE FROM purchases; DELETE FROM chat; DELETE FROM prices;');
+    db.exec('DELETE FROM kv; DELETE FROM needs; DELETE FROM custom_concepts; DELETE FROM events; DELETE FROM purchases; DELETE FROM chat; DELETE FROM prices; DELETE FROM price_snapshots;');
   },
 };

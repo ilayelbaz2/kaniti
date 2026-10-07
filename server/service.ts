@@ -7,7 +7,7 @@ import { basketTotal, discoveryDeals, emptyPriceBook, evalCondition, generateBas
 import { chooseProduct, cheaper, effPrice, fit, relevant } from './engine/match.ts';
 import { cachedSearch, householdProviders, onlineCatalog, referenceBook, scanPrices } from './providers/index.ts';
 import { withTimeout } from './providers/types.ts';
-import { identityGaps } from '../shared/product.ts';
+import { identityGaps, productLine } from '../shared/product.ts';
 import { findConcepts, normalize } from './chat/parser.ts';
 import { recordScanSnapshots } from './snapshots.ts';
 import { buildInsights, answer as insightAnswer, type InsightsInput, type InsightQuestion } from './insights.ts';
@@ -312,7 +312,7 @@ export async function priceLookup(needId: string) {
   const rows: { provider: string; name: string; price: number; promoText?: string; source: ProductSearchResult['source'] }[] = [];
   for (const p of providers) {
     const cands = (book.perProvider.get(p.id)?.get(needId) ?? []).filter((x) => relevant(c, need, x)).sort(cheaper);
-    if (cands[0]) rows.push({ provider: p.name, name: cands[0].name, price: effPrice(cands[0]), promoText: cands[0].promoText, source: cands[0].source });
+    if (cands[0]) rows.push({ provider: p.name, name: productLine(cands[0]), price: effPrice(cands[0]), promoText: cands[0].promoText, source: cands[0].source });
   }
   rows.sort((a, b) => a.price - b.price);
   return { rows, failures: book.failures.map((f) => f.name), concept: c };

@@ -3,6 +3,8 @@ import type { Flexibility, HouseholdNeed, Purchase } from '../../shared/types.ts
 import type { Ctx } from '../App.tsx';
 import { api, type LearningEventRow } from '../api.ts';
 import { nis } from '../components/ChatParts.tsx';
+import { Insights } from './Insights.tsx';
+import { productLine } from '../../shared/product.ts';
 
 const FLEX: [Flexibility, string][] = [
   ['exact_product', 'רק מוצר/מותג מסוים'],
@@ -14,12 +16,13 @@ const FLEX_SHORT: Record<Flexibility, string> = { exact_product: 'רק המוצ�
 const fmt = (x: number) => (x >= 10 ? Math.round(x) : Math.round(x * 10) / 10);
 
 export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
-  const [tab, setTab] = useState<'learned' | 'history'>(() => { try { return sessionStorage.getItem('kaniti.homeTab') === 'history' ? 'history' : 'learned'; } catch { return 'learned'; } });
-  const pick = (t: 'learned' | 'history') => { setTab(t); try { sessionStorage.setItem('kaniti.homeTab', t); } catch { /* ignore */ } };
+  type Tab = 'learned' | 'insights' | 'history';
+  const [tab, setTab] = useState<Tab>(() => { try { const t = sessionStorage.getItem('kaniti.homeTab'); return t === 'history' || t === 'insights' ? t : 'learned'; } catch { return 'learned'; } });
+  const pick = (t: Tab) => { setTab(t); try { sessionStorage.setItem('kaniti.homeTab', t); } catch { /* ignore */ } };
   return (
     <div className="screen">
-      <div className="tabs"><button className={tab === 'learned' ? 'on' : ''} onClick={() => pick('learned')}>מה למדת עלינו</button><button className={tab === 'history' ? 'on' : ''} onClick={() => pick('history')}>קניות קודמות</button></div>
-      {tab === 'learned' ? <Learned ctx={ctx} /> : <History />}
+      <div className="tabs"><button className={tab === 'learned' ? 'on' : ''} onClick={() => pick('learned')}>מה למדתי</button><button className={tab === 'insights' ? 'on' : ''} onClick={() => pick('insights')}>תובנות</button><button className={tab === 'history' ? 'on' : ''} onClick={() => pick('history')}>קניות קודמות</button></div>
+      {tab === 'learned' ? <Learned ctx={ctx} /> : tab === 'insights' ? <Insights /> : <History />}
     </div>
   );
 }
@@ -168,7 +171,7 @@ function History() {
           <div className="row wrap small">{p.dealsUsed > 0 && <span>🔥 {p.dealsUsed} מבצעים נוצלו</span>}{p.substitutions > 0 && <span>↔ {p.substitutions} תחליפים</span>}</div>
           <button className="link" style={{ alignSelf: 'flex-start' }} onClick={() => setOpen(open === p.id ? null : p.id)}>{open === p.id ? 'סגור' : 'פתח'}</button>
           {open === p.id && p.items.map((i) => (
-            <div className="price-row" key={i.needId}><span>{i.emoji} {i.label} × {i.quantity}<div className="faint">{i.productName}</div></span>{i.status === 'opportunity' && <span className="tag opportunity">סטוק</span>}</div>
+            <div className="price-row" key={i.needId}><span>{i.emoji} {i.label} × {i.quantity}<div className="faint">{i.productName ? productLine({ name: i.productName, brand: i.brand, sizeText: i.sizeText }) : ''}{i.price ? ` · ₪${i.price}` : ''}</div></span>{i.status === 'opportunity' && <span className="tag opportunity">סטוק</span>}</div>
           ))}
           {idx === 0 && <QtyFeedback p={p} onChange={(np) => setList(list.map((x) => (x.id === np.id ? np : x)))} />}
         </div>

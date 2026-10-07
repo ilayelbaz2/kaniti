@@ -4,6 +4,7 @@ import type { Ctx } from '../App.tsx';
 import { api } from '../api.ts';
 import { nis, SourceTag } from '../components/ChatParts.tsx';
 import { DELIVERY_LABEL, deliveryTagClass } from './CartSheet.tsx';
+import { productLine } from '../../shared/product.ts';
 
 const STAGES = ['בודק מחירים בכל רשת…', 'מחשב משלוח ושלמות סל…', 'בוחר המלצה…'];
 
@@ -108,7 +109,7 @@ function QuoteCard({ q, win, bestOnline, threshold, onCart }: { q: BasketQuote; 
         <div>
           {q.lines.map((l) => (
             <div className="price-row" key={l.needId}>
-              <span className="grow">{l.label} × {l.quantity}<div className="faint">{l.uncertain ? `לא בטוח: ${l.product?.name}` : l.missing ? 'לא נמצא' : l.product?.name}{l.product?.promoText ? ` · ${l.product.promoText}` : ''}</div></span>
+              <span className="grow">{l.label} × {l.quantity}<div className="faint">{l.uncertain ? `לא בטוח: ${l.product ? productLine(l.product) : ''}` : l.missing ? 'לא נמצא' : l.product ? productLine(l.product) : ''}{l.product?.promoText ? ` · ${l.product.promoText}` : ''}</div></span>
               <b>{l.missing ? '—' : nis(Math.round(l.lineTotal * 10) / 10)}</b>
             </div>
           ))}

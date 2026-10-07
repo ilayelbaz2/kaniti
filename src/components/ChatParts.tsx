@@ -1,3 +1,4 @@
+import { productLine } from '../../shared/product.ts';
 import { useState } from 'react';
 import type { ChatComponent, PriceSource } from '../../shared/types.ts';
 
@@ -41,7 +42,7 @@ export function ChatPart({ c, send, used, markUsed }: { c: ChatComponent; send: 
         <div className={`mini-card stack ${d.kind === 'discovery' ? 'discovery-card' : 'deal-card'}`}>
           <div className="small">{d.kind === 'discovery' ? '💡 אולי תאהבו' : '🔥 מצאתי מחיר טוב'}</div>
           <div className="spread"><b>{d.emoji} {d.label}</b><span><b>{nis(d.product.promoPrice ?? d.product.price)}</b> <span className="faint">‎−{d.discountPct}%</span></span></div>
-          <div className="faint">{d.product.name}{d.product.promoText ? ` · ${d.product.promoText}` : ''}</div>
+          <div className="faint">{productLine(d.product)}{d.product.promoText ? ` · ${d.product.promoText}` : ''}</div>
           <div className="small muted">{d.why}</div>
           <div className="chips">
             <button className="chip quick" disabled={used} onClick={() => once(`#deal take ${d.needId} ${d.suggestQty}`, `להכניס ${d.suggestQty} ${d.label}`)}>להכניס {d.suggestQty}</button>
