@@ -74,7 +74,8 @@ const slotText = (from: string, to: string) => {
 };
 
 export function fromZuz(raw: ZuzRaw | null | undefined): DeliveryRead {
-  if (!raw || !raw.lookup) return { pageOk: false };
+  if (!raw) return { pageOk: false };
+  if (!raw.lookup) return { pageOk: true, minOrder: raw.minOrder }; // no stored street address to ask the site about
   const comp = (type: string) => raw.lookup!.components.find((c) => c.types.includes(type))?.name;
   const address = raw.lookup.components.length ? { street: comp('route'), number: comp('street_number'), city: comp('locality') } : undefined;
   const read: DeliveryRead = { pageOk: true, address, minOrder: raw.minOrder };

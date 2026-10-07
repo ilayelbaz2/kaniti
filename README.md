@@ -136,9 +136,16 @@ against real published files in `tests/fixtures/`.
   above). The onboarding check is city-level (branch lists) and is shown only as a hint, never as confirmation.
 - **Delivery fees / minimum order** come from the supermarket page once it has been checked for your address;
   until then the chain's list price is used and labelled "הערכה".
-- Reading the delivery state relies on each site's current page. ZuZ chains are read from the site's own app state;
-  Shufersal and Rami Levy from the visible cart page text. If a site changes its page, the result is "unknown",
-  never "confirmed".
+- How each site is read: **ZuZ chains** (Tiv Taam, Victory, Yenot Bitan, Carrefour, Keshet, Quik) — inside the
+  supermarket page, the site's own address lookup geocodes the household street address against the chain's
+  delivery polygons; the cart counts as tied to the address only if the cart's selected delivery area is the area
+  the site returns for that address. Fee, minimum order and free slots come from the site. Verified against the live
+  Tiv Taam site from CI (`scripts/address-check.ts`): matching area → confirmed, other area / no area → user action,
+  an address outside the delivery areas → unavailable. **Shufersal and Rami Levy** are read from the visible cart
+  page text (address, "דמי משלוח", delivery slots); not verifiable from the cloud — run `npm run home-validation`.
+  If a site changes its page, the result is "unknown", never "confirmed".
+- To check the address, the ZuZ sites are sent the household's street address (the same thing their checkout asks
+  for). Nothing else from the household profile is sent.
 - **"Live"** means the price came from the chain's online catalog at that moment — it is not a checkout.
 - **Product matching** is rule-based (name fit, pack-size hints, look-alike exclusions). Branch files use terse,
   abbreviated names, so an occasional odd pick is possible — replace it once in the basket and the app remembers.

@@ -13,7 +13,7 @@ export const ZUZ_CHAINS: ZuzChain[] = [
   { id: 'victory', name: 'ויקטורי אונליין', host: 'https://www.victoryonline.co.il', retailerId: 1470, defaultBranch: 2930, fee: 29.9, minOrder: 200 },
   { id: 'ybitan', name: 'יינות ביתן אונליין', host: 'https://www.ybitan.co.il', retailerId: 1131, defaultBranch: 1015, fee: 29.9, minOrder: 200 },
   { id: 'carrefour', name: 'קרפור אונליין', host: 'https://www.carrefour.co.il', retailerId: 1540, defaultBranch: 0, fee: 29.9, minOrder: 200 },
-  { id: 'tivtaam', name: 'טיב טעם אונליין', host: 'https://www.tivtaam.co.il', retailerId: 1062, defaultBranch: 924, fee: 29.9, minOrder: 250 },
+  { id: 'tivtaam', name: 'טיב טעם אונליין', host: 'https://www.tivtaam.co.il', retailerId: 1062, defaultBranch: 924, fee: 29.9, minOrder: 300 },
   { id: 'keshet', name: 'קשת טעמים אונליין', host: 'https://www.keshet-teamim.co.il', retailerId: 1219, defaultBranch: 2585, fee: 29.9, minOrder: 200 },
   { id: 'quik', name: 'קוויק', host: 'https://www.quik.co.il', retailerId: 1541, defaultBranch: 3102, fee: 19.9, minOrder: 100 },
 ];
