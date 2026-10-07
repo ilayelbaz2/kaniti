@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
 import type { AppState, ChatMessage } from '../shared/types.ts';
-import { store } from './db.ts';
+import { kvGet, kvSet, store } from './db.ts';
 import { advanceDays, nowIso, uid } from './clock.ts';
 import { completeOnboarding, estimateStock, getConcept, learnFromQtyFeedback, nextShopInDays, updateNeed, type OnboardingInput } from './state.ts';
 import { CONCEPTS } from './catalog.ts';
@@ -11,6 +11,7 @@ import { ACTION_ORDER } from './chat/actions.ts';
 import { executeActions, executeCommand } from './chat/execute.ts';
 import { interpretWithLlm, llmEnabled } from './chat/llm.ts';
 import * as svc from './service.ts';
+import * as cartJobs from './cart/prepare.ts';
 import { compareBasket } from './engine/compare.ts';
 import { explainItem } from './engine/basket.ts';
 import { DEMO, onlineCatalog } from './providers/index.ts';
@@ -57,11 +58,13 @@ app.get('/api/providers', wrap(() => ({
 
 app.post('/api/delivery-check', wrap(async (req) => {
   const address = { city: String(req.body.city ?? ''), street: req.body.street };
-  return Promise.all(onlineCatalog().map(async (p) => {
+  const results = await Promise.all(onlineCatalog().map(async (p) => {
     try { return { ...(await withTimeout(p.checkDelivery(address), 15000, p.name)), name: p.name }; } catch (e) {
-      return { providerId: p.id, name: p.name, delivers: null, checkedLive: false, note: `לא הצלחתי לבדוק כרגע (${(e as Error).message})`, deliveryFee: p.deliveryFee };
+      return { providerId: p.id, name: p.name, status: 'unknown' as const, delivers: null, checkedLive: false, note: `לא הצלחתי לבדוק כרגע (${(e as Error).message})`, deliveryFee: p.deliveryFee };
     }
   }));
+  kvSet('deliveryStatus', Object.fromEntries(results.map((r) => [r.providerId, r.status ?? 'unknown'])));
+  return results;
 }));
 
 app.get('/api/stores/:chainId', wrap(async (req) => {
@@ -75,7 +78,7 @@ app.get('/api/stores/:chainId', wrap(async (req) => {
 }));
 
 app.post('/api/onboarding', wrap((req) => {
-  completeOnboarding(req.body as OnboardingInput);
+  completeOnboarding({ ...(req.body as OnboardingInput), deliveryStatus: kvGet('deliveryStatus') ?? undefined });
   const welcome: ChatMessage = {
     id: uid('m_'), role: 'assistant', createdAt: nowIso(),
     text: 'אני כבר יודע את הבסיס.\nרוצה שאנסה לבנות את הקנייה הראשונה שלכם?',
@@ -183,6 +186,14 @@ app.post('/api/purchases/:id/feedback', wrap((req) => {
   learnFromQtyFeedback(needId, value);
   return p;
 }));
+
+// ---------- cart handoff (prepare the real supermarket cart; checkout stays on the supermarket site) ----------
+
+app.post('/api/cart/prepare', wrap(async (req) => svc.prepareProviderCart(req.body.providerId)));
+app.get('/api/cart/job', wrap(() => cartJobs.currentJob()));
+app.post('/api/cart/resume', wrap(() => { cartJobs.resume(); return cartJobs.currentJob(); }));
+app.post('/api/cart/clear', wrap(() => { cartJobs.clearJob(); return { ok: true }; }));
+app.get('/api/cart/seed', wrap(() => cartJobs.cartSeed()));
 
 // ---------- dev helpers (never in production) ----------
 

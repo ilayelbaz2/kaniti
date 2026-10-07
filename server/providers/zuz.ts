@@ -77,10 +77,10 @@ export function zuzProvider(chain: ZuzChain): GroceryProvider {
       const pick = local.find((b) => /אונליין|online|אינטרנט/i.test(b.name)) ?? local[0];
       if (pick) {
         kvSet(key, pick.id);
-        return { providerId: chain.id, delivers: true, checkedLive: true, deliveryFee: chain.fee, minOrder: chain.minOrder, note: `יש סניף ב${address.city} (${pick.name}, #${pick.id}) — לפי רשימת הסניפים, לא אומת מול הכתובת` };
+        return { providerId: chain.id, status: 'likely', delivers: true, checkedLive: true, deliveryFee: chain.fee, minOrder: chain.minOrder, note: `יש סניף ב${address.city} (${pick.name}, #${pick.id}) — לפי רשימת הסניפים, לא אומת מול הכתובת` };
       }
       if (!chain.defaultBranch && list[0]) kvSet(key, list[0].id);
-      return { providerId: chain.id, delivers: null, checkedLive: true, deliveryFee: chain.fee, minOrder: chain.minOrder, note: `אין סניף של הרשת ב${address.city}. ייתכן שמשלחים ממרכז הפצה — לא אומת` };
+      return { providerId: chain.id, status: 'unknown', delivers: null, checkedLive: true, deliveryFee: chain.fee, minOrder: chain.minOrder, note: `אין סניף של הרשת ב${address.city}. ייתכן שמשלחים ממרכז הפצה — לא אומת` };
     },
     async searchProducts(query) {
       let bid = branch();

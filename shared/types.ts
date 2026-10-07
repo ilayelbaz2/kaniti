@@ -16,6 +16,8 @@ export type Household = {
   flexibilityStyle: 'strict' | 'balanced' | 'adventurous';
   shopEveryDays: number;
   onboardedAt?: string;
+  deliveryStatus?: Record<string, DeliveryStatus>; // per online provider, from the onboarding check
+  childDairyAllergy?: boolean;
 };
 
 export type Flexibility = 'exact_product' | 'brand_flexible' | 'category_flexible' | 'exploratory';
@@ -74,6 +76,8 @@ export type BasketItem = {
   accepted: boolean; // discovery items start as false (suggestion only)
   product?: ResolvedProduct;
   usualProductName?: string; // set when we substituted
+  substitutedFrom?: string; // label of the need this item stands in for (e.g. חזה עוף → פרגיות)
+  uncertain?: boolean; // product match isn't clear — the user should pick
   condition?: { kind: 'good_price'; met: boolean | null; note?: string };
 };
 
@@ -129,6 +133,9 @@ export type Purchase = {
   items: { needId: string; label: string; emoji: string; quantity: number; unit: string; productName?: string; price?: number; status: BasketStatus }[];
   dealsUsed: number;
   substitutions: number;
+  removed?: { needId: string; label: string }[]; // suggested but not bought
+  stockUps?: string[]; // labels bought as stock-up opportunities
+  viaCart?: boolean; // seeded from a prepared supermarket cart
   feedback?: Record<string, 'too_much' | 'right' | 'ran_out'>;
 };
 
@@ -152,8 +159,11 @@ export type ProductSearchResult = {
   fetchedAt: string;
 };
 
+export type DeliveryStatus = 'confirmed' | 'likely' | 'unknown' | 'unavailable';
+
 export type DeliveryAvailability = {
   providerId: string;
+  status?: DeliveryStatus;
   delivers: boolean | null; // null = could not determine
   note: string;
   deliveryFee?: number;
@@ -169,6 +179,7 @@ export type QuoteLine = {
   lineTotal: number;
   substituted?: boolean;
   missing?: boolean;
+  uncertain?: boolean; // a candidate exists but doesn't clearly match — not counted as found
 };
 
 export type BasketQuote = {
@@ -187,10 +198,14 @@ export type BasketQuote = {
   substitutionsCount: number;
   source: PriceSource;
   fetchedAt: string;
+  uncertainCount?: number;
+  cartSupported?: boolean; // Kaniti can prepare this provider's real online cart
+  deliveryStatus?: DeliveryStatus;
 };
 
 export type Comparison = {
   createdAt: string;
+  basketKey?: string;
   itemsCount: number;
   quotes: BasketQuote[];
   recommendation: { text: string; winnerId?: string; kind: 'online' | 'physical' | 'none' };
@@ -239,4 +254,50 @@ export type AppState = {
   llm: boolean;
   demoPrices: boolean;
   now: string;
+};
+
+// ---------- cart handoff ----------
+
+export type CartJobStatus =
+  | 'starting'
+  | 'verification_required' // CAPTCHA / bot check — the user completes it in the supermarket window
+  | 'login_required' // the user logs in (incl. OTP) in the supermarket window
+  | 'adding'
+  | 'ready' // every planned item is in the supermarket cart
+  | 'partial' // some items couldn't be added
+  | 'failed'
+  | 'unsupported';
+
+export type CartJobLine = {
+  needId: string;
+  label: string;
+  productId?: string;
+  productName?: string;
+  quantity: number;
+  price?: number;
+  state: 'pending' | 'added' | 'failed' | 'skipped';
+  reason?: string;
+};
+
+export type CartJob = {
+  id: string;
+  providerId: string;
+  providerName: string;
+  status: CartJobStatus;
+  message: string;
+  startedAt: string;
+  updatedAt: string;
+  lines: CartJobLine[];
+  cartUrl?: string;
+  cartTotal?: number; // as the supermarket shows it
+  cartItemCount?: number;
+  plannedTotal?: number; // Kaniti's quote for the same lines
+  deliveryFee?: number;
+  deliveryWindow?: string;
+  substitutions: number;
+  loginRequired: boolean;
+  userAction?: string;
+  anonymous?: boolean; // cart lives only in the automation browser (not in the account)
+  demo?: boolean;
+  paymentBoundary: 'stopped_before_checkout';
 };

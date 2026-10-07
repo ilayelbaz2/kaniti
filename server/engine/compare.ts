@@ -6,10 +6,12 @@ import { ensureNeed, getConcept } from '../state.ts';
 import { cachedSearch, householdProviders } from '../providers/index.ts';
 import type { GroceryProvider } from '../providers/types.ts';
 import { chooseProduct, effPrice } from './match.ts';
+import { cartSupported } from '../cart/drivers.ts';
+import { basketKey } from '../service.ts';
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-async function quoteOne(p: GroceryProvider, basket: Basket): Promise<BasketQuote> {
+export async function quoteOne(p: GroceryProvider, basket: Basket): Promise<BasketQuote> {
   const items = basket.items.filter((i) => i.accepted && i.condition?.met !== false);
   const base: BasketQuote = {
     providerId: p.id, providerName: p.name, kind: p.kind, ok: false, lines: [], subtotal: 0, deliveryFee: 0, total: 0,
@@ -29,9 +31,16 @@ async function quoteOne(p: GroceryProvider, basket: Basket): Promise<BasketQuote
         lines.push({ needId: it.needId, label: it.label, quantity: it.quantity, lineTotal: 0, missing: true });
         continue;
       }
-      const choice = chooseProduct(c, need, rows);
+      // A product the user picked by hand at this provider wins over automatic matching.
+      const picked = it.lockedByUser && it.product?.providerId === p.id ? rows.find((r) => r.productId === it.product!.productId) : undefined;
+      const choice = picked ? { product: picked, substituted: false } : chooseProduct(c, need, rows);
       if (!choice) { lines.push({ needId: it.needId, label: it.label, quantity: it.quantity, lineTotal: 0, missing: true }); continue; }
       const prod = choice.product;
+      if ('uncertain' in choice && choice.uncertain) {
+        // Never count a suspicious match as found (and never put it in a cart automatically).
+        lines.push({ needId: it.needId, label: it.label, quantity: it.quantity, product: prod, lineTotal: 0, missing: true, uncertain: true });
+        continue;
+      }
       sources.add(prod.source);
       // multi-buy promos only apply if we buy enough
       const unit = prod.promoMinQty && it.quantity < prod.promoMinQty ? prod.price : effPrice(prod);
@@ -44,7 +53,10 @@ async function quoteOne(p: GroceryProvider, basket: Basket): Promise<BasketQuote
       ...base, ok: found > 0, lines, subtotal, deliveryFee: fee, total: r2(subtotal + fee),
       minOrderIssue: p.minOrder && subtotal < p.minOrder ? `מינימום הזמנה ₪${p.minOrder}` : undefined,
       completeness: items.length ? found / items.length : 0,
-      unavailableCount: lines.filter((l) => l.missing).length,
+      unavailableCount: lines.filter((l) => l.missing && !l.uncertain).length,
+      uncertainCount: lines.filter((l) => l.uncertain).length,
+      cartSupported: p.kind === 'online' && cartSupported(p.id),
+      deliveryStatus: p.kind === 'online' ? (store.household()?.deliveryStatus?.[p.id] ?? 'unknown') : undefined,
       substitutionsCount: lines.filter((l) => l.substituted).length,
       source: sources.has('demo') ? 'demo' : p.kind === 'physical' ? 'branch_data' : sources.size === 1 && sources.has('live') ? 'live' : 'estimate',
       error: found === 0 ? 'לא נמצאו מוצרים' : undefined,
@@ -59,7 +71,7 @@ export async function compareBasket(basket: Basket): Promise<Comparison> {
   const providers = householdProviders(h, { physical: true });
   const quotes = await Promise.all(providers.map((p) => quoteOne(p, basket).catch((e) => ({ ...emptyQuote(p), error: String(e) }))));
   // Missing items are valued at what other stores charge, so a cheap-but-incomplete basket doesn't "win".
-  const adj = (q: BasketQuote) => q.total + q.lines.filter((l) => l.missing).reduce((s, l) => s + medianLine(quotes, l.needId), 0);
+  const adj = (q: BasketQuote) => q.total + q.lines.filter((l) => l.missing).reduce((s, l) => s + (medianLine(quotes, l.needId) || fallbackValue(basket, l.needId, l.quantity)), 0);
   const ok = quotes.filter((q) => q.ok);
   const online = ok.filter((q) => q.kind === 'online').sort((a, b) => adj(a) - adj(b) || b.completeness - a.completeness);
   const physical = ok.filter((q) => q.kind === 'physical').sort((a, b) => adj(a) - adj(b));
@@ -91,7 +103,7 @@ export async function compareBasket(basket: Basket): Promise<Comparison> {
   if (failed.length && (bo || bp)) recommendation.text += ` (${failed.map((f) => f.providerName).join(', ')} לא החזירו מחיר — המשכתי בלעדיהם.)`;
 
   const comparison: Comparison = {
-    createdAt: nowIso(), itemsCount: basket.items.filter((i) => i.accepted).length,
+    createdAt: nowIso(), basketKey: basketKey(basket), itemsCount: basket.items.filter((i) => i.accepted).length,
     quotes: [...online, ...physical, ...failed], recommendation,
   };
   store.saveComparison(comparison);
@@ -99,6 +111,12 @@ export async function compareBasket(basket: Basket): Promise<Comparison> {
 }
 
 const pct = (q: BasketQuote) => `${Math.round(q.completeness * 100)}%`;
+
+/** When no store has a price for a missing item, still charge something so a gap never looks like a saving. */
+function fallbackValue(basket: Basket, needId: string, qty: number): number {
+  const it = basket.items.find((i) => i.needId === needId);
+  return (it?.product?.price ?? 20) * qty;
+}
 
 function medianLine(quotes: BasketQuote[], needId: string): number {
   const v = quotes.flatMap((q) => q.lines.filter((l) => l.needId === needId && !l.missing).map((l) => l.lineTotal)).sort((a, b) => a - b);

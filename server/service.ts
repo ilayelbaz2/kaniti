@@ -308,3 +308,31 @@ export function basketSummary(b: Basket) {
     discoveries: b.items.filter((i) => i.status === 'discovery' && !i.accepted).length,
   };
 }
+
+// ---------- cart handoff ----------
+
+/** Fingerprint of what's actually being bought, to know whether a stored comparison still applies. */
+export function basketKey(b: Basket): string {
+  return b.items.filter((i) => i.accepted && i.condition?.met !== false).map((i) => `${i.needId}:${i.quantity}:${i.lockedByUser ? i.product?.productId : ''}`).sort().join('|');
+}
+
+export async function prepareProviderCart(providerId?: string) {
+  const { quoteOne } = await import('./engine/compare.ts');
+  const { startCartJob } = await import('./cart/prepare.ts');
+  const b = store.basket();
+  if (!b || b.status !== 'building' || !b.items.length) throw new Error('אין סל פעיל להכין ממנו עגלה');
+  const cmp = store.comparison();
+  const fresh = cmp && cmp.basketKey === basketKey(b);
+  const onlineOk = (cmp?.quotes ?? []).filter((q) => q.ok && q.kind === 'online');
+  const pid = providerId ?? (cmp?.recommendation.kind === 'online' ? cmp.recommendation.winnerId : onlineOk[0]?.providerId);
+  if (!pid) throw new Error('לא נבחרה רשת. השוו רשתות קודם.');
+  let quote = fresh ? onlineOk.find((q) => q.providerId === pid) : undefined;
+  if (!quote) {
+    const p = householdProviders(store.household()).find((x) => x.id === pid);
+    if (!p) throw new Error('הרשת הזאת לא ברשימת הרשתות שלכם');
+    quote = await quoteOne(p, b);
+    if (!quote.ok) throw new Error(`לא הצלחתי לתמחר את הסל ב${p.name}: ${quote.error ?? ''}`);
+  }
+  logEvent({ type: 'accepted_product', value: { cartPreparedAt: pid } });
+  return startCartJob({ quote });
+}

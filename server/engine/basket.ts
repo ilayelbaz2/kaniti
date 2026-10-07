@@ -5,7 +5,7 @@ import { round1 } from '../catalog.ts';
 import { store } from '../db.ts';
 import { daysBetween, now, nowIso, uid } from '../clock.ts';
 import { allConcepts, dealSensitivityFor, estimateStock, getConcept } from '../state.ts';
-import { brandOf, chooseProduct, effPrice, relevant } from './match.ts';
+import { brandOf, chooseProduct, effPrice, headMatch, relevant } from './match.ts';
 
 export type PriceBook = {
   byNeed: Map<string, ProductSearchResult[]>;
@@ -84,8 +84,9 @@ export function generateBasket({ horizonDays, prices, previous, budgetCap }: Gen
     const required = rate * horizonDays + buffer;
     const deficit = required - est.qty;
     const choice = priced ? chooseProduct(c, n, prices.byNeed.get(n.id) ?? []) : null;
-    const disc = choice ? discountOf(n.id, choice.product) : 0;
-    const strongDeal = choice && disc >= dealSensitivityFor(n.dealSensitivity);
+    const sure = choice && !choice.uncertain ? choice : null; // never chase a "deal" on a doubtful match
+    const disc = sure ? discountOf(n.id, sure.product) : 0;
+    const strongDeal = sure && disc >= dealSensitivityFor(n.dealSensitivity);
 
     if (deficit > c.packSize * 0.25) {
       let qty = ceilPacks(deficit, c.packSize);
@@ -192,7 +193,7 @@ export function householdDeals(prices: PriceBook): Deal[] {
     if (!n.active || n.neverSuggest || n.dismissedDeals >= 3) continue;
     const c = getConcept(n.id);
     const choice = chooseProduct(c, n, prices.byNeed.get(n.id) ?? []);
-    if (!choice) continue;
+    if (!choice || choice.uncertain) continue;
     const disc = discountOf(n.id, choice.product);
     if (disc < dealSensitivityFor(n.dealSensitivity) - (n.dismissedDeals > 0 ? -0.1 : 0)) continue;
     const stock = c.shelfStable && n.wasteRisk === 'low';
@@ -218,7 +219,7 @@ export function discoveryDeals(prices: PriceBook, exclude: string[]): Deal[] {
     if (exclude.includes(c.id)) continue;
     const openToIt = openCats.has(c.category) || c.category === 'cleaning' || c.category === 'produce';
     if (!openToIt) continue;
-    const cands = (prices.byNeed.get(c.id) ?? []).filter((p) => relevant(c, n, p)).sort((a, b) => discountOf(c.id, b) - discountOf(c.id, a));
+    const cands = (prices.byNeed.get(c.id) ?? []).filter((p) => relevant(c, n, p) && headMatch(c, p)).sort((a, b) => discountOf(c.id, b) - discountOf(c.id, a));
     const p = cands[0];
     if (!p) continue;
     const disc = discountOf(c.id, p);
@@ -247,6 +248,7 @@ function item(n: HouseholdNeed, c: Concept, qty: number, status: BasketItem['sta
       it.reason += ` · החלפתי מ־${choice.usualName}${choice.note ? ` (${choice.note})` : ''}`;
     }
     if (c.brands.length && !brandOf(choice.product, c) && n.flexibility === 'exact_product') it.reason += ' · לא בטוח שזה המותג';
+    if (choice.uncertain) { it.uncertain = true; it.reason += ' · לא בטוח שזה המוצר הנכון — בחרו מוצר'; }
   }
   return it;
 }

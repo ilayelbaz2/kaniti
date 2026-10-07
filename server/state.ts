@@ -1,6 +1,7 @@
 // Household state: onboarding, needs, stock estimation and the learning rules.
 // Everything here is deterministic; the chat layer only calls these functions.
 import type { Flexibility, Household, HouseholdNeed, LearningEvent, Level } from '../shared/types.ts';
+import { DAIRY_FREE } from './engine/match.ts';
 import { CONCEPTS, conceptById, customConcept, defaultTypical14, round1, type Concept } from './catalog.ts';
 import { store } from './db.ts';
 import { daysBetween, now, nowIso } from './clock.ts';
@@ -26,6 +27,8 @@ export type OnboardingInput = {
   staples: string[];
   customStaples: string[];
   threshold: number;
+  dairyAllergyWho?: 'all' | 'kids';
+  deliveryStatus?: Record<string, import('../shared/types.ts').DeliveryStatus>;
 };
 
 const FLEX_FROM_ANSWER: Record<'strict' | 'deal' | 'any', Flexibility> = {
@@ -44,7 +47,8 @@ export function completeOnboarding(input: OnboardingInput): Household {
     adults: input.adults,
     children: input.children,
     kosher: input.kosher,
-    allergies: input.dairyAllergy ? ['חלב'] : [],
+    allergies: input.dairyAllergy ? [input.dairyAllergyWho === 'kids' ? 'חלב (הילד)' : 'חלב'] : [],
+    childDairyAllergy: input.dairyAllergy && input.dairyAllergyWho === 'kids',
     dietNotes: [input.vegetarian ? 'צמחוני' : '', input.otherConstraint ?? ''].filter(Boolean),
     homeAddress: input.address,
     driveSavingsThresholdNis: input.threshold,
@@ -53,8 +57,12 @@ export function completeOnboarding(input: OnboardingInput): Household {
     flexibilityStyle: style,
     shopEveryDays: 14,
     onboardedAt: nowIso(),
+    deliveryStatus: input.deliveryStatus,
   };
   store.saveHousehold(household);
+  const kidsOnly = input.dairyAllergy && input.dairyAllergyWho === 'kids';
+  // A child with a dairy allergy: their desserts become dairy-free desserts.
+  if (kidsOnly && input.staples.includes('KIDS_DAIRY')) input.staples = [...input.staples.filter((x) => x !== 'KIDS_DAIRY'), 'DAIRY_FREE_DESSERT'];
 
   for (const label of input.customStaples.map((s) => s.trim()).filter(Boolean)) {
     input.staples.push(customConceptFor(label).id);
@@ -74,8 +82,16 @@ export function completeOnboarding(input: OnboardingInput): Household {
       n.flexibility = inferFlex(concept.defaultFlex, style);
     }
     if (input.vegetarian && (concept.meat || concept.category === 'fish')) { n.active = false; n.neverSuggest = true; n.hardConstraints = ['צמחוני']; }
-    if (input.dairyAllergy && concept.dairy) { n.active = false; n.neverSuggest = true; n.hardConstraints = ['אלרגיה לחלב']; }
-    if (concept.id === 'KIDS_DAIRY' && kids === 0) n.active = false;
+    if (input.dairyAllergy && !kidsOnly) {
+      // Whole household is dairy-free: dairy concepts are out, everything else must look parve.
+      if (concept.dairy) { n.active = false; n.neverSuggest = true; n.hardConstraints = ['אלרגיה לחלב']; } else n.hardConstraints = [DAIRY_FREE];
+    }
+    if (kidsOnly) {
+      if (concept.id === 'KIDS_DAIRY') { n.active = false; n.neverSuggest = true; n.hardConstraints = ['אלרגיה לחלב (הילד)']; }
+      else if (concept.kidItem) n.hardConstraints = [DAIRY_FREE]; // shared with the child → must be parve
+    }
+    if (concept.dairyFree) n.hardConstraints = [DAIRY_FREE];
+    if ((concept.id === 'KIDS_DAIRY' || concept.id === 'DAIRY_FREE_DESSERT') && kids === 0) n.active = false;
     store.saveNeed(n);
   }
   return household;
