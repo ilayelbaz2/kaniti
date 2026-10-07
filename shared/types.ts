@@ -268,7 +268,9 @@ export type Comparison = {
 
 export type Deal = {
   id: string;
-  kind: 'now' | 'stock' | 'discovery';
+  /** now = needed soon + good price · stock = shelf-stable, unusually cheap · anyway = bought regularly, good price
+   *  right now (not necessarily a promo) · discovery = something new, restrained */
+  kind: 'now' | 'stock' | 'anyway' | 'discovery';
   needId: string;
   label: string;
   emoji: string;
@@ -277,6 +279,11 @@ export type Deal = {
   why: string;
   suggestQty: number;
   unit: string;
+  providerName?: string;
+  unitPriceText?: string; // normalised (per 100g / 100ml / kg) when comparable
+  regularPrice?: number;
+  savingNis?: number; // vs the regular price, at the suggested quantity
+  promoEndsAt?: string;
 };
 
 // ---------- chat ----------

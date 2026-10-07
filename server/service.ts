@@ -6,6 +6,7 @@ import { allConcepts, customConceptFor, ensureNeed, estimateStock, getConcept, l
 import { basketTotal, discoveryDeals, emptyPriceBook, evalCondition, generateBasket, householdDeals, toResolved, type PriceBook } from './engine/basket.ts';
 import { chooseProduct, cheaper, effPrice, fit, relevant } from './engine/match.ts';
 import { cachedSearch, householdProviders, onlineCatalog, referenceBook, scanPrices } from './providers/index.ts';
+import { dealSections, type FullBook } from './engine/deals.ts';
 import { withTimeout } from './providers/types.ts';
 import { identityGaps, productLine } from '../shared/product.ts';
 import { findConcepts, normalize } from './chat/parser.ts';
@@ -24,9 +25,10 @@ export async function scanForBasket(extraNeedIds: string[] = []): Promise<ScanRe
   const needs = store.needs();
   const active = needs.filter((n) => n.active && !n.neverSuggest).map((n) => n.id);
   const discovery = rotatingDiscoveryCandidates();
+  const recentlyBought = needs.filter((n) => !n.neverSuggest && n.lastPurchasedAt && Date.now() - new Date(n.lastPurchasedAt).getTime() < 60 * 86400000).map((n) => n.id);
   const groups = new Set(active.map((id) => getConcept(id).subGroup).filter(Boolean));
   const siblings = allConcepts().filter((c) => c.subGroup && groups.has(c.subGroup)).map((c) => c.id);
-  const ids = [...new Set([...active, ...extraNeedIds, ...siblings, ...discovery])];
+  const ids = [...new Set([...active, ...extraNeedIds, ...siblings, ...recentlyBought, ...discovery])];
   let full = await scanPrices(ids, providers);
   // Every online chain failed → fall back to branch price files so the basket still has (labelled) prices.
   if (!full.byNeed.size) {
@@ -57,7 +59,7 @@ function rotatingDiscoveryCandidates(): string[] {
     .map((c) => c.id);
   const week = Math.floor(Date.now() / (7 * 86400000));
   const start = (week * 5) % Math.max(1, pool.length);
-  return [...pool.slice(start), ...pool.slice(0, start)].slice(0, 6);
+  return [...pool.slice(start), ...pool.slice(0, start)].slice(0, 10);
 }
 
 export async function buildBasket(horizonDays = 14): Promise<{ basket: Basket; failures: PriceBook['failures'] }> {
@@ -276,29 +278,32 @@ export function setBudget(cap: number | null): Basket {
 
 // ---------- deals / prices ----------
 
-export async function getDeals(): Promise<{ deals: Deal[]; failures: PriceBook['failures']; demo: boolean; providers: Record<string, string> }> {
-  let book = lastBook();
-  let failures = book.failures;
-  if (!book.byNeed.size) {
+export async function getDeals(): Promise<{ deals: Deal[]; failures: PriceBook['failures']; demo: boolean; providers: Record<string, string>; note?: string; checkedNeeds: number }> {
+  let full = loadFullBook();
+  let failures = lastBook().failures;
+  if (!full) {
     const r = await scanForBasket();
-    book = r.book;
     failures = r.failures;
-    kvSet('lastBook', serializeBook(book));
+    full = loadFullBook();
   }
-  const dismissed = new Set(kvGet<string[]>('dismissedDealIds') ?? []);
-  const deals = householdDeals(book).filter((d) => !dismissed.has(d.id));
-  kvSet('lastDeals', deals);
-  const all = [...book.byNeed.values()].flat();
-  const names = Object.fromEntries(householdProviders(store.household(), { physical: true }).map((p) => [p.id, p.name]));
-  return { deals, failures, demo: all.some((r) => r.source === 'demo'), providers: names };
+  const names = Object.fromEntries([...onlineCatalog(), ...householdProviders(store.household(), { physical: true })].map((p) => [p.id, p.name]));
+  const res = full ? dealSections(full, names) : { deals: [], checkedNeeds: 0, providers: 0, note: 'אין עדיין מחירים — בנו סל או רעננו.' };
+  kvSet('lastDeals', res.deals);
+  rememberProducts(res.deals.map((d) => d.product));
+  const all = full ? [...full.perProvider.values()].flatMap((m) => [...m.values()].flat()) : [];
+  return { deals: res.deals, failures, demo: all.some((r) => r.source === 'demo'), providers: names, note: res.note, checkedNeeds: res.checkedNeeds };
+}
+
+function loadFullBook(): FullBook | null {
+  const s = kvGet<{ perProvider: [string, [string, ProductSearchResult[]][]][] }>('lastFullBook');
+  return s ? { perProvider: new Map(s.perProvider.map(([k, v]) => [k, new Map(v)])) } : null;
 }
 
 export function dismissDeal(dealId: string, needId: string) {
   const ids = kvGet<string[]>('dismissedDealIds') ?? [];
   kvSet('dismissedDealIds', [...ids, dealId].slice(-200));
   const n = ensureNeed(needId);
-  n.dismissedDeals += 1;
-  if (n.dismissedDeals >= 2 && n.dealSensitivity !== 'low') n.dealSensitivity = n.dealSensitivity === 'high' ? 'medium' : 'low';
+  n.dismissedDeals += 1; // raises the bar a little per dismissal (see dealSections) — no second, stacking penalty
   store.saveNeed(n);
   logEvent({ type: 'deal_dismissed', needId, value: dealId });
 }
@@ -393,6 +398,7 @@ export function confirmPurchase(input: ConfirmInput): Purchase {
   if (basket) { basket.status = 'purchased'; store.saveBasket(basket); }
   store.saveComparison(null);
   kvSet('lastBook', null);
+  kvSet('lastFullBook', null);
   kvSet('cartJob', null);
   void import('./cart/prepare.ts').then((m) => m.clearJob());
   return purchase;

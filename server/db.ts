@@ -103,6 +103,7 @@ export const store = {
     for (const r of rows) ins.run(r.providerId, r.productId, needId, r.name, r.price, r.promoPrice ?? null, r.source, JSON.stringify(r), r.fetchedAt);
   },
   /** Median regular price we've seen for this exact product at this provider (our "normal price"). */
+  dismissedDeals: () => kvGet<string[]>('dismissedDealIds') ?? [],
   normalPrice(providerId: string, productId: string, sinceIso: string): number | null {
     const rows = db.prepare('SELECT price FROM prices WHERE provider_id = ? AND product_id = ? AND fetched_at >= ?').all(providerId, productId, sinceIso) as { price: number }[];
     if (rows.length < 2) return null;

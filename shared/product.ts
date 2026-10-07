@@ -23,9 +23,8 @@ export function productTitle(p: ProductIdentity): string {
   const name = p.name.replace(/\s+/g, ' ').trim();
   const brand = cleanBrand(p.brand);
   if (!brand) return name;
-  const n = norm(name);
-  const tokens = norm(brand).split(' ').filter((w) => w.length >= 3);
-  if (n.includes(norm(brand)) || tokens.some((w) => n.includes(w))) return name;
+  // Only the whole brand counts as "already in the name" — "עוף טוב" is not in "פרגיות עוף".
+  if (` ${norm(name)} `.includes(` ${norm(brand)} `) || norm(name).startsWith(norm(brand))) return name;
   return `${brand} ${name}`;
 }
 
@@ -42,10 +41,8 @@ export function productSize(p: ProductIdentity): string | undefined {
 /** One line: "לנור מרכך כביסה מרוכז כחול · 819 מ״ל" or "פרגיות עוף טוב · ₪39.90 לק״ג". */
 export function productLine(p: ProductIdentity): string {
   const title = productTitle(p);
-  if (p.byWeight || /לק"?ג|לק״ג/.test(p.sizeText ?? '')) {
-    const per = p.unitPriceText ?? (p.price !== undefined ? `₪${p.price} לק״ג` : 'לפי משקל');
-    return `${title} · ${per}`;
-  }
+  // Weighted: the price shown next to it is per kg; the line just says how it's sold.
+  if (p.byWeight || /לק"?ג|לק״ג/.test(p.sizeText ?? '')) return `${title} · נמכר לפי משקל`;
   const size = productSize(p);
   return size ? `${title} · ${size}` : title;
 }

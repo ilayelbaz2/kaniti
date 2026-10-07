@@ -222,7 +222,7 @@ export function householdDeals(prices: PriceBook): Deal[] {
     const choice = chooseProduct(c, n, prices.byNeed.get(n.id) ?? []);
     if (!choice || choice.uncertain) continue;
     const disc = discountOf(n.id, choice.product);
-    if (disc < dealSensitivityFor(n.dealSensitivity) - (n.dismissedDeals > 0 ? -0.1 : 0)) continue;
+    if (disc < dealSensitivityFor(n.dealSensitivity) + Math.min(2, n.dismissedDeals) * 0.05) continue;
     const stock = c.shelfStable && n.wasteRisk === 'low';
     out.push({
       id: `${n.id}:${choice.product.productId}`, kind: stock ? 'stock' : 'now', needId: n.id, label: c.label, emoji: c.emoji,
