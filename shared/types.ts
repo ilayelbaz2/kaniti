@@ -275,6 +275,7 @@ export type CartJobLine = {
   productName?: string;
   quantity: number;
   price?: number;
+  byWeight?: boolean; // sold per kg — quantity is kilograms
   state: 'pending' | 'added' | 'failed' | 'skipped';
   reason?: string;
 };

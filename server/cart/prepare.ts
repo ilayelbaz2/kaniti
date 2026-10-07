@@ -40,6 +40,7 @@ export function startCartJob({ quote }: PrepareInput, autorun = true): CartJob {
   const lines: CartJobLine[] = quote.lines.map((l) => ({
     needId: l.needId, label: l.label, productId: l.product?.productId, productName: l.product?.name,
     quantity: l.quantity, price: l.product ? +(l.lineTotal / Math.max(1, l.quantity)).toFixed(2) : undefined,
+    byWeight: /לק"?ג|לקג/.test(l.product?.sizeText ?? '') || /לק"?ג/.test(l.product?.name ?? ''),
     state: l.missing || l.uncertain || !l.product ? 'skipped' : 'pending',
     reason: l.uncertain ? 'לא בטוח שזה המוצר הנכון — בחרו בעצמכם' : l.missing || !l.product ? 'לא נמצא ברשת הזאת' : undefined,
   }));
@@ -87,7 +88,7 @@ async function run(job: CartJob, driver: CartDriver, deps?: BrowserDeps) {
   }
 
   const todo: CartLineIn[] = job.lines.filter((l) => l.state === 'pending' && l.productId)
-    .map((l) => ({ productId: l.productId!, quantity: l.quantity, name: l.productName ?? l.label, byWeight: /ק"?ג/.test(l.productName ?? '') }));
+    .map((l) => ({ productId: l.productId!, quantity: l.quantity, name: l.productName ?? l.label, byWeight: l.byWeight }));
   save(job, { status: 'adding', userAction: undefined, anonymous: !loggedIn, message: `מוסיף ${todo.length} פריטים לעגלה ב${job.providerName}…` });
   const res = await driver.addItems(page, todo);
   for (const l of job.lines) {

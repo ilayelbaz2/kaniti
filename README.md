@@ -28,14 +28,44 @@ Optional environment variables:
 
 To use it from your phone: run it on a home machine and open `http://<machine-ip>:8787`, then "Add to Home Screen" (it's a PWA).
 
+### Preparing the real supermarket cart (V1.5)
+
+Compare → **הכן עגלה ב…** (or in chat: "תכין לי עגלה בשופרסל").
+
+1. Kaniti opens a real Chrome window **on the computer that runs Kaniti** (install Google Chrome; or set `KANITI_CHROME_PATH`).
+2. If the supermarket needs you to log in — or shows a CAPTCHA / SMS code — you do it yourself in that window.
+   Kaniti waits and continues on its own. It never sees or stores your password.
+3. Kaniti puts every confidently-matched item into the supermarket's own cart, using the same cart calls the website
+   makes, and stops at the cart page. Doubtful matches are **not** added — you'll see them listed.
+4. You get "העגלה מוכנה" with the store's own total and a button to open the cart. **Checkout and payment happen only
+   on the supermarket's site/app.** When logged in, the cart is in your account, so you can also finish on your phone.
+5. "סיימתי להזמין" opens the purchase confirmation, pre-filled from the prepared cart.
+
+Logins stay in a dedicated browser profile (`data/browser-profile/`, git-ignored), managed by Chrome itself.
+On a computer without a screen, cart preparation that needs a login fails with a clear message.
+
+Supported: Shufersal Online, Rami Levy Online, and the ZuZ chains (Victory, Yenot Bitan, Carrefour, Tiv Taam,
+Keshet Teamim, Quik). Delete the profile folder to forget all supermarket sessions.
+
+### Security boundary
+
+- Kaniti has no payment form and never stores, sees, logs or transmits card numbers, CVV, payment tokens, bank or
+  supermarket passwords, or OTP codes. It never clicks checkout or places an order.
+- Supermarket session tokens are only used inside the supermarket's own page and are never returned to Kaniti.
+- The server listens on your local network so your phone can reach it; there is no login, so run it only on a
+  trusted home network. Dev endpoints are disabled with `npm start` (production).
+
 ### Checks
 
 ```bash
-npm test                         # parser, providers, transparency parsing (real published files), two-cycle learning simulation
-npm run live-check -- "רמת גן"    # hits the real supermarket sites: delivery, search, promos, branch files, a real basket comparison
+npm test                         # 100+ tests: parser, matching on real product names, learning, ranking, cart state machine, 2-cycle simulation
+npm run live-check -- "רמת גן"    # real sites: delivery, search, promos, branch files, a real basket comparison
+npm run cart-check -- tivtaam     # fills a real cart at the supermarket and reads it back (stops at the cart)
+npm run rehearsal -- "רמת גן"     # two full shopping cycles on real data for the household profile
+npm run match-report              # dumps real search results per household item (for matching regression tests)
 ```
 
-`live-check` also runs in GitHub Actions (`.github/workflows/live-check.yml`, manual or on provider changes).
+All of these also run in GitHub Actions (`.github/workflows/live-check.yml`).
 
 ## How it's built (and why it's small)
 
