@@ -6,3 +6,5 @@ data/cache
 *.log
 .env
 test-results
+data/*.md
+data/*.json
