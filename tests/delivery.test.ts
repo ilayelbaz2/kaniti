@@ -271,3 +271,16 @@ test('ZuZ: minimum order from the site against the real cart total', () => {
 test('ZuZ: page not readable (structure changed / not loaded) → unknown', () => {
   assert.equal(assessDelivery('tivtaam', fromZuz(null), HOME).deliveryStatus, 'unknown');
 });
+
+test('ZuZ exact address: confirmed only when the site resolved this street, number and city', async () => {
+  const { zuzAddressResult, ZUZ_CHAINS } = await import('../server/providers/zuz.ts');
+  const chain = ZUZ_CHAINS.find((c) => c.id === 'tivtaam')!;
+  const comps = (route?: string, num?: string, city?: string) => [route && { long_name: route, types: ['route'] }, num && { long_name: num, types: ['street_number'] }, city && { long_name: city, types: ['locality'] }].filter(Boolean);
+  const area = [{ id: 1, name: 'רמת גן', branchId: 5, deliveryAreaPrice: 30, deliveryMinimumCost: 300 }];
+  const ok = zuzAddressResult(chain, 200, { areas: area, addressComponents: comps('ביאליק', '12', 'רמת גן') } as never, HOME);
+  assert.equal(ok.status, 'confirmed');
+  assert.equal(ok.deliveryFee, 30);
+  assert.equal(zuzAddressResult(chain, 200, { areas: area, addressComponents: comps(undefined, undefined, 'רמת גן') } as never, HOME).status, 'unknown', 'city only is not the exact address');
+  assert.equal(zuzAddressResult(chain, 200, { areas: area, addressComponents: comps('ז׳בוטינסקי', '12', 'רמת גן') } as never, HOME).status, 'unknown', 'another street is not this address');
+  assert.equal(zuzAddressResult(chain, 404, null, HOME).status, 'unavailable');
+});

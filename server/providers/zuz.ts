@@ -7,6 +7,7 @@ import { nowIso } from '../clock.ts';
 import { kvGet, kvSet } from '../db.ts';
 import { httpFetch, num, type GroceryProvider } from './types.ts';
 import { sameCity } from './cities.ts';
+import { addressMatchesHome } from '../cart/delivery.ts';
 import { isoDay, normUnit, sizeOf } from './transparency.ts';
 
 type ZuzChain = { id: string; name: string; host: string; retailerId: number; defaultBranch: number; fee: number; minOrder: number };
@@ -73,13 +74,18 @@ export function parseZuz(providerId: string, json: { products?: ZProduct[] }): P
 type ZAreasResponse = { areas?: { id: number; name: string; branchId?: number; deliveryAreaPrice?: number; deliveryMinimumCost?: number | null }[]; addressComponents?: { long_name: string; types: string[] }[]; error?: string };
 
 /** Turns the site's address→area lookup into a delivery result. 200+areas = the site delivers to this exact address. */
-export function zuzAddressResult(chain: ZuzChain, status: number, j: ZAreasResponse | null): DeliveryAvailability {
+export function zuzAddressResult(chain: ZuzChain, status: number, j: ZAreasResponse | null, home?: Address): DeliveryAvailability {
   const comp = (t: string) => j?.addressComponents?.find((c) => c.types.includes(t))?.long_name;
   const addressText = comp('route') ? [[comp('route'), comp('street_number')].filter(Boolean).join(' '), comp('locality')].filter(Boolean).join(', ') : undefined;
   const area = j?.areas?.[0];
+  // Confirmed only if the site resolved THIS street, number and city — not just the city or a similar street.
+  const exact = !!(comp('route') && comp('street_number') && comp('locality') && addressText && (!home || addressMatchesHome(addressText, home)));
+  if (status === 200 && area && !exact) {
+    return { providerId: chain.id, status: 'unknown', delivers: null, checkedLive: true, addressText, note: `האתר זיהה כתובת ${addressText ? `אחרת או חלקית (${addressText})` : 'חלקית'} — לא אומת משלוח לכתובת המדויקת.` };
+  }
   if (status === 200 && area) {
     if (area.branchId) kvSet(`provider:${chain.id}:branch`, area.branchId);
-    return { providerId: chain.id, status: 'confirmed', delivers: true, checkedLive: true, addressText, deliveryFee: area.deliveryAreaPrice ?? chain.fee, minOrder: area.deliveryMinimumCost ?? chain.minOrder, note: `האתר מאשר משלוח לכתובת${addressText ? ` (${addressText})` : ''} — אזור ${area.name}` };
+    return { providerId: chain.id, status: 'confirmed', delivers: true, checkedLive: true, addressText, deliveryFee: area.deliveryAreaPrice ?? undefined, minOrder: area.deliveryMinimumCost ?? undefined, note: `האתר מאשר משלוח לכתובת${addressText ? ` (${addressText})` : ''} — אזור ${area.name}` };
   }
   if (status === 404 || (status === 200 && !area)) return { providerId: chain.id, status: 'unavailable', delivers: false, checkedLive: true, addressText, note: 'לפי האתר, הכתובת מחוץ לאזורי המשלוח של הרשת.' };
   if (status === 400) return { providerId: chain.id, status: 'unknown', delivers: null, checkedLive: true, note: 'האתר לא זיהה את הכתובת — בדקו רחוב ומספר בית.' };
@@ -102,7 +108,7 @@ export function zuzProvider(chain: ZuzChain): GroceryProvider {
         const url = `${chain.host}/v2/retailers/${chain.retailerId}/areas?appId=4&languageId=1&deliveryTypeId=1&deliveryTypeId=5&query=${encodeURIComponent(`${address.street}, ${address.city}`)}`;
         const res = await fetch(url, { headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126 Safari/537.36' }, signal: AbortSignal.timeout(12000) });
         const j = (await res.json().catch(() => null)) as ZAreasResponse | null;
-        return zuzAddressResult(chain, res.status, j);
+        return zuzAddressResult(chain, res.status, j, address);
       }
       const list = await branches();
       const local = list.filter((b) => sameCity(b.city, address.city) || sameCity(b.name, address.city));

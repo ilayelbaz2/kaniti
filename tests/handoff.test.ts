@@ -198,3 +198,28 @@ test('show cart: brings the automation window to the front on the cart page (one
   assert.deepEqual(nav, ['https://www.shufersal.co.il/online/he/cart']);
   assert.equal(front, 1);
 });
+
+test('one cart job at a time: a second "prepare" while waiting for the user returns the same job, no new navigation', async () => {
+  const st = { url: 'https://www.shufersal.co.il/online/he/my-account/addresses', loggedIn: true, cartHtml: '<div>בחרו כתובת למשלוח</div>', inCart: [] as string[] };
+  const { page, nav } = shufersalPage(st);
+  const p = _runForTest(quote('shufersal'), cartDriver('shufersal')!, deps(page));
+  await tick(200);
+  const waiting = currentJob()!;
+  assert.equal(waiting.status, 'address_required');
+  const again = startCartJob({ quote: quote('shufersal', ['P_999']) });
+  assert.equal(again.id, waiting.id, 'the running job is returned, not replaced');
+  assert.deepEqual(nav, []);
+  st.url = 'https://www.shufersal.co.il/online/he/A'; st.cartHtml = ADDRESS_OK;
+  await p;
+});
+
+test('a quantity shortfall in the site cart is flagged (and a flagged line keeps the job from being "ready")', () => {
+  const mk = { lines: [{ needId: 'A', label: 'א', productId: '1', quantity: 3, state: 'pending' }] as import('../shared/types.ts').CartJobLine[] };
+  applyReadback(mk, { added: ['1'], failed: [] }, { lines: [{ productId: '1', quantity: 1 }], source: 'server' });
+  assert.equal(mk.lines[0].short, true);
+});
+
+test('ZuZ cart readback: no server cart → null (unverified), never the page\'s local copy', async () => {
+  const page = { evaluate: async (src: string) => (src.includes('serverCartId') ? null : undefined) };
+  assert.equal(await cartDriver('tivtaam')!.readCartLines(page as never, ['1']), null);
+});

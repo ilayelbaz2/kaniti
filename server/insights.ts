@@ -492,6 +492,7 @@ export function savings(i: InsightsInput): InsightsReport['savings'] {
   let subEst = 0;
   for (const p of i.purchases) {
     if (p.priceSource === 'demo') continue;
+    let measured = false; // the store-choice gap already includes this basket's promos — don't count them twice
     const a = p.atPurchase;
     if (a?.fresh && a.nextBest && a.chosenTotal > 0) {
       const nb = a.nextBest;
@@ -501,19 +502,20 @@ export function savings(i: InsightsInput): InsightsReport['savings'] {
       if (completeOk && totalOk && gap > 0) {
         if (p.priceSource === 'live' && !p.deliveryFeeEstimated) storeSaved += gap;
         else storeEst += gap;
+        measured = true;
       }
     }
     for (const it of p.items) {
       const q = it.quantity || 0;
       if (typeof it.price !== 'number') continue;
-      if (typeof it.regularPrice === 'number' && it.regularPrice > it.price && (!it.promoMinQty || q >= it.promoMinQty)) {
+      if (!measured && typeof it.regularPrice === 'number' && it.regularPrice > it.price && (!it.promoMinQty || q >= it.promoMinQty)) {
         promoSaved += (it.regularPrice - it.price) * q;
       }
-      if (typeof it.usualPrice === 'number' && it.usualPrice > it.price) subEst += (it.usualPrice - it.price) * q;
+      if (!measured && typeof it.usualPrice === 'number' && it.usualPrice > it.price) subEst += (it.usualPrice - it.price) * q;
     }
   }
   const potential = Math.round(
-    i.deals.filter((d) => d.kind !== 'discovery' && d.kind !== 'anyway').reduce((s, d) => s + (d.savingNis ?? dealFraction(d) * (d.product?.price || 0) * (d.suggestQty || 0)), 0),
+    i.deals.filter((d) => d.kind !== 'discovery' && d.kind !== 'anyway' && d.product?.source !== 'demo').reduce((s, d) => s + (d.savingNis ?? dealFraction(d) * (d.product?.price || 0) * (d.suggestQty || 0)), 0),
   );
 
   const saved = round2(storeSaved + promoSaved);
@@ -525,7 +527,8 @@ export function savings(i: InsightsInput): InsightsReport['savings'] {
     const parts = [storeEst > 0 ? 'בחירת חנות' : '', subEst > 0 ? 'מוצר חלופי זול יותר' : ''].filter(Boolean).join(' ו');
     insights.push(ins('saved_estimated', `חיסכון משוער ${nis(estimated)} (${parts})`, 'estimated', { value: estimated }));
   }
-  if (!insights.length) insights.push(ins('saved_none', 'עדיין אין חיסכון שאפשר למדוד — צריך קנייה שנעשתה אחרי השוואה', 'insufficient'));
+  const demoOnly = i.purchases.length > 0 && i.purchases.every((p) => p.priceSource === 'demo');
+  if (!insights.length) insights.push(ins('saved_none', demoOnly ? 'בקניות דמו לא מודדים חיסכון — המחירים אינם אמיתיים' : 'עדיין אין חיסכון שאפשר למדוד — צריך קנייה שנעשתה אחרי השוואה', 'insufficient'));
   if (potential > 0) insights.push(ins('potential', `אפשר לחסוך עכשיו ~${nis(potential)} במבצעים`, 'estimated', { value: potential }));
   return { insights, saved, estimated, potential };
 }

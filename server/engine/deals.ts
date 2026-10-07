@@ -94,7 +94,9 @@ export function dealSections(book: FullBook, providerNames: Record<string, strin
       if (xs.length >= 3) marketUnit.set(per, median(xs));
     }
     const scored = cands.map((p) => score(p, marketUnit)).sort((a, b) => b.disc - a.disc || effPrice(a.p) - effPrice(b.p));
-    const best = scored[0];
+    // Promotions / own-history drops are deals; being a cheaper brand than the others is not (that's "anyway" at most).
+    const promoScored = cands.map((p) => score(p, new Map())).filter((x) => x.disc > 0).sort((a, b) => b.disc - a.disc || effPrice(a.p) - effPrice(b.p));
+    const best = promoScored[0] ?? { ...scored[0], disc: 0 };
     const household = !!n && (n.active || recent(n));
     const sens = n ? dealSensitivityFor(n.dealSensitivity) + Math.min(2, n.dismissedDeals) * 0.05 : 0.25;
     const per14 = n ? ceilPacks(n.typical14DayQty, c.packSize) : 1;
@@ -103,7 +105,7 @@ export function dealSections(book: FullBook, providerNames: Record<string, strin
     if (household && n) {
       const est = estimateStock(n);
       const dueSoon = !est.known || est.qty < n.typical14DayQty;
-      if (c.shelfStable && n.wasteRisk === 'low' && best.disc >= Math.max(sens, 0.15) && Math.max(best.vsShelf, best.vsHistory, best.vsMarket) >= 0.15) {
+      if (c.shelfStable && n.wasteRisk === 'low' && best.disc >= Math.max(sens, 0.15)) {
         ranked.push({ kind: 'stock', weight: 0.9, deal: make('stock', c, n, best, `נשמר לאורך זמן ואתם קונים את זה קבוע — ‎−${Math.round(best.disc * 100)}% ${best.basis}`, minQty(Math.min(per14 * 2, Math.max(2, per14)))) });
         continue;
       }
@@ -114,7 +116,10 @@ export function dealSections(book: FullBook, providerNames: Record<string, strin
       // Bought anyway, and the best chain is clearly below the usual price for it right now (not necessarily a promo).
       const cheapNow = scored.find((s) => s.vsMarket >= 0.08 || s.vsHistory >= 0.08);
       if (n.active && cheapNow) {
-        ranked.push({ kind: 'anyway', weight: 0.8, deal: make('anyway', c, n, cheapNow, `אתם קונים את זה בכל מקרה — כרגע זול ב־${Math.round(Math.max(cheapNow.vsMarket, cheapNow.vsHistory) * 100)}% ${cheapNow.vsHistory > cheapNow.vsMarket ? 'ממה שראיתי בחודשיים האחרונים' : 'מהמחיר הרגיל ברשתות'}`, minQty(per14)) });
+        const viaHistory = cheapNow.vsHistory >= cheapNow.vsMarket;
+        ranked.push({ kind: 'anyway', weight: 0.8, deal: make('anyway', c, n, cheapNow, viaHistory
+          ? `אתם קונים את זה בכל מקרה — כרגע זול ב־${Math.round(cheapNow.vsHistory * 100)}% ממה שראיתי בחודשיים האחרונים`
+          : `אתם קונים את זה בכל מקרה — זו האפשרות הזולה ב־${Math.round(cheapNow.vsMarket * 100)}% מהמחיר הנפוץ ל${c.label} ברשתות (בהשוואה למותגים וגדלים אחרים)`, minQty(per14)) });
       }
       continue;
     }

@@ -274,9 +274,7 @@ function zuzDriver(id: string, host: string): CartDriver {
             var lines = j && ((j.cart && j.cart.lines) || j.lines);
             if (Array.isArray(lines)) return { lines: lines.filter(isProduct).map(function (x) { return { productId: idOf(x), quantity: Number(x.quantity) }; }), total: isFinite(total) ? total : undefined, source: 'server' };
           }
-          var local = Object.keys(Cart.lines || {}).map(function (k) { return Cart.lines[k]; }).filter(isProduct);
-          if (!Cart.serverCartId) return null; // nothing was saved to the site yet
-          return { lines: local.map(function (x) { return { productId: idOf(x), quantity: Number(x.quantity) }; }), total: isFinite(total) ? total : undefined, source: 'page' };
+          return null; // only the site's own cart counts — never the page's local copy
         } catch (e) { return null; }
       }`).catch(() => null);
     },

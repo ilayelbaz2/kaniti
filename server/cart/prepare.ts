@@ -13,7 +13,13 @@ import { DEMO } from '../providers/index.ts';
 import { cartDriver, type CartDriver, type CartLineIn, type CartReadback } from './drivers.ts';
 import { addressKey, assessDelivery, recordDelivery, stillValid, type AssessOpts } from './delivery.ts';
 
+const TERMINAL: CartJobStatus[] = ['ready', 'partial', 'failed', 'unsupported'];
 let current: CartJob | null = kvGet<CartJob>('cartJob');
+// A job left mid-way by a previous run of the server can't continue (its browser is gone).
+if (current && !TERMINAL.includes(current.status)) {
+  current = { ...current, status: 'failed', userAction: undefined, message: 'ההכנה הופסקה (קניתי הופעלה מחדש). אפשר להתחיל שוב.' };
+  kvSet('cartJob', current);
+}
 let poke: (() => void) | null = null;
 const LOGIN_WAIT_MS = Number(process.env.KANITI_LOGIN_WAIT_MS ?? 10 * 60 * 1000);
 /** How long the supermarket page must stay still (same URL, no open dialog) before Kaniti reads it. */
@@ -91,6 +97,8 @@ async function waitFor(check: () => Promise<boolean>, ms: number): Promise<boole
 export type PrepareInput = { quote: BasketQuote; demo?: boolean; verifyOnly?: boolean };
 
 export function startCartJob({ quote, verifyOnly }: PrepareInput, autorun = true): CartJob {
+  // Never start a second run while one is waiting for the user — it would navigate the window they're typing in.
+  if (autorun && current && !TERMINAL.includes(current.status)) return current;
   const driver = cartDriver(quote.providerId);
   const lines: CartJobLine[] = quote.lines.map((l) => ({
     needId: l.needId, label: l.label, productId: l.product?.productId, productName: l.product?.name, brand: l.product?.brand, sizeText: l.product?.sizeText,
@@ -210,7 +218,7 @@ export function applyReadback(job: Pick<CartJob, 'lines'> & Partial<CartJob>, re
     if (!readback) { l.state = 'unverified'; l.reason = 'נשלח לאתר, אבל לא הצלחתי לוודא שהוא בעגלה'; continue; }
     if (!inCart.has(l.productId)) { l.state = 'failed'; l.reason = 'האתר לא שמר את הפריט בעגלה'; continue; }
     const q = inCart.get(l.productId);
-    if (q !== undefined && q + 1e-6 < l.quantity * (l.byWeight ? 0.9 : 1)) { l.state = 'added'; l.reason = `בעגלה ${q} במקום ${l.quantity}`; continue; }
+    if (q !== undefined && q + 1e-6 < l.quantity * (l.byWeight ? 0.9 : 1)) { l.state = 'added'; l.short = true; l.reason = `בעגלה ${q} במקום ${l.quantity}`; continue; }
     l.state = 'added';
   }
   job.cartVerified = !!readback;
@@ -236,8 +244,9 @@ function finish(job: CartJob, cartUrl: string, cart: CartReadback | null, delive
   const added = job.lines.filter((l) => l.state === 'added').length;
   const unverified = job.lines.filter((l) => l.state === 'unverified').length;
   const notAdded = job.lines.filter((l) => l.state === 'failed' || l.state === 'skipped').length;
-  // A redirect, or items the site never confirmed, is never "ready".
-  const status: CartJobStatus = added === 0 && unverified === 0 ? 'failed' : notAdded || unverified ? 'partial' : 'ready';
+  const short = job.lines.filter((l) => l.short).length;
+  // A redirect, items the site never confirmed, or fewer than planned is never "ready".
+  const status: CartJobStatus = added === 0 && unverified === 0 ? 'failed' : notAdded || unverified || short ? 'partial' : 'ready';
   const itemCount = cart?.itemCount ?? cart?.lines.length;
   const extra = itemCount !== undefined ? itemCount - added : 0; // things that were already in the site's cart
   const base = status === 'ready' ? `העגלה מוכנה ב${job.providerName} 🎯 — כל ${added} הפריטים נמצאים בעגלה באתר`

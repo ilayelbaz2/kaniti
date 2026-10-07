@@ -161,6 +161,13 @@ test('5: savings — store choice, promo, substitution, demo', () => {
   }));
   assert.deepEqual([s.saved, s.estimated], [0, 0]);
 
+  // a measured store-choice gap already contains this basket's promos and substitutions — never counted twice
+  s = savings(input({ purchases: [store({ items: [item('BAMBA', 2, 9.9, { regularPrice: 14.2 }), item('LAUNDRY_SOFTENER', 1, 18.8, { usualPrice: 22 })] })] }));
+  assert.deepEqual([s.saved, s.estimated], [23, 0]);
+  // demo deals never become "potential"
+  s = savings(input({ deals: [{ ...deal('TUNA', 0.3), product: { ...deal('TUNA', 0.3).product, source: 'demo' } }] }));
+  assert.equal(s.potential, 0);
+
   // potential from current deals, never added to saved
   s = savings(input({ deals: [deal('TUNA', 0.3)] }));
   assert.equal(s.potential, 12);

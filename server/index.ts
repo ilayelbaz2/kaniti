@@ -90,10 +90,11 @@ app.get('/api/stores/:chainId', wrap(async (req) => {
 app.post('/api/onboarding', wrap((req) => {
   const input = req.body as OnboardingInput;
   // "יש עוד משהו שאתה תמיד מתעצבן כשנגמר?" — known products become staples, anything else a custom one.
-  if (input.annoyText?.trim()) {
-    const found = findConcepts(input.annoyText);
-    if (found.length) input.stapleLevels = { ...(input.stapleLevels ?? {}), ...Object.fromEntries(found.map((m) => [m.concept.id, 'always' as const])) };
-    else if (input.annoyText.trim().split(/\s+/).length <= 3) input.customStaples = [...(input.customStaples ?? []), { label: input.annoyText.trim(), level: 'always' }];
+  for (const part of (input.annoyText ?? '').split(/[,،\n]|\s+ו(?=\S{2})|\s+וגם\s+/).map((x) => x.trim()).filter(Boolean)) {
+    if (/^(לא|אין|שום דבר|כלום|לא יודע|אין משהו|-)$/.test(part) || /(^|\s)(לא|בלי|אין)\s/.test(part)) continue; // "לא", "לא חלב" — not a staple
+    const found = findConcepts(part);
+    if (found.length) { for (const m of found) if (input.stapleLevels?.[m.concept.id] !== 'no') input.stapleLevels = { ...(input.stapleLevels ?? {}), [m.concept.id]: 'always' }; }
+    else if (part.split(/\s+/).length <= 3) input.customStaples = [...(input.customStaples ?? []), { label: part, level: 'always' }];
   }
   completeOnboarding({ ...input, deliveryStatus: kvGet('deliveryStatus') ?? undefined });
   const welcome: ChatMessage = {

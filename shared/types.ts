@@ -343,6 +343,7 @@ export type CartJobLine = {
   byWeight?: boolean; // sold per kg — quantity is kilograms
   /** added = found in the site's cart on read-back; unverified = sent, but the cart couldn't be read back */
   state: 'pending' | 'added' | 'failed' | 'skipped' | 'unverified';
+  short?: boolean; // in the site's cart, but fewer than planned
   reason?: string;
 };
 

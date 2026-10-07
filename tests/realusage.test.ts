@@ -62,6 +62,14 @@ test('deals: no padding — prices without any real discount give zero deals and
   assert.match(r.note!, /לא אמציא מבצעים/);
 });
 
+test('deals: a cheaper brand with no promotion is never "now"/"stock" — at most "anyway", and says why', () => {
+  const p = (providerId: string, id: string, brand: string, price: number): ProductSearchResult => ({ providerId, productId: id, name: `טונה בשמן ${brand} 160 גרם`, brand, sizeText: '160 גרם', price, available: true, source: 'live', fetchedAt: '' });
+  const book = { perProvider: new Map([['a', new Map([['TUNA', [p('a', 'x1', 'סטארקיסט', 10), p('a', 'x2', 'ויליגר', 10.5)]]])], ['b', new Map([['TUNA', [p('b', 'x3', 'פירות הים', 10.2), p('b', 'x4', 'מותג בית', 6)]]])]]) };
+  const r = dealSections(book, { a: 'A', b: 'B' });
+  assert.ok(!r.deals.some((d) => d.kind === 'now' || d.kind === 'stock'), JSON.stringify(r.deals.map((d) => d.kind)));
+  for (const d of r.deals) assert.ok(!/מבצע/.test(d.why));
+});
+
 test('deal → basket adds exactly that product from that chain', async () => {
   const { deals } = await svc.getDeals();
   const d = deals.find((x) => x.kind !== 'discovery')!;

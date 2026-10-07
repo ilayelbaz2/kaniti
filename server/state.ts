@@ -84,7 +84,8 @@ export function completeOnboarding(input: OnboardingInput): Household {
     // Staple = "don't let it run out". How often it is bought stays with the replenishment engine.
     const level = levels[concept.id];
     n.staple = level === 'always' || level === 'sometimes' ? level : undefined;
-    if (level === 'no') n.neverSuggest = true; // "לא אצלנו" — reversible in the household screen
+    if (level === 'no') n.neverSuggest = true; // "לא אצלנו" — reversible
+    else if (level === 'always' || level === 'sometimes') n.neverSuggest = false;
     if (answer) {
       n.flexibility = FLEX_FROM_ANSWER[answer];
       n.flexConfidence = 0.8;
