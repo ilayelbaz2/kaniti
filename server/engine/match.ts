@@ -72,10 +72,17 @@ export function relevant(concept: Concept, need: HouseholdNeed | null, p: Produc
   const own = norm([concept.label, concept.query, ...concept.synonyms, ...(concept.mustInclude ?? [])].join(' '));
   if (words(p.name).some((x) => NOISE.some((n) => (x.startsWith(n) || x.slice(1).startsWith(n)) && !own.includes(n)))) return false;
   if (needsParveCheck(concept, need) && !PARVE_MARKERS.some((m) => has(text, m))) return false;
+  if ((concept.dairyFree || need?.hardConstraints.includes(DAIRY_FREE)) && mentionsDairy(p.name)) return false;
   return true;
 }
 
 export const DAIRY_FREE = 'ללא חלב';
+
+/** "…וחלב 2%", "חלבי", "גבינה" — dairy named in the product (plant "milks" and "ללא חלב" don't count). */
+export function mentionsDairy(name: string): boolean {
+  const n = norm(name).replace(/ללא (חלב|לקטוז)/g, ' ').replace(/(חלב|משקה) (סויה|שקדים|קוקוס|שיבולת שועל|אורז)/g, ' ').replace(/חמאת בוטנים/g, ' ');
+  return /(^|\s)(ו?חלב|חלבי|ו?גבינ|ו?שמנת|ו?חמאה|מי גבינה)/.test(n);
+}
 const SAFE_FOR_DAIRY_FREE = new Set(['meat', 'fish', 'produce', 'cleaning', 'paper', 'eggs']);
 /** A hard dairy-free constraint is enforced by name markers (פרווה / ללא חלב / סויה…) unless the category can't contain dairy. */
 export function needsParveCheck(concept: Concept, need: HouseholdNeed | null): boolean {
