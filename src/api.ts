@@ -11,7 +11,7 @@ async function call<T>(path: string, body?: unknown, method?: string): Promise<T
   return data as T;
 }
 
-export type DeliveryResult = { providerId: string; name: string; delivers: boolean | null; note: string; deliveryFee?: number; checkedLive: boolean };
+export type DeliveryResult = { providerId: string; name: string; status?: 'confirmed' | 'likely' | 'unknown' | 'unavailable'; delivers: boolean | null; note: string; deliveryFee?: number; checkedLive: boolean };
 export type StoreOption = { storeId: string; name: string; city: string; address?: string };
 export type CatalogItem = { id: string; label: string; emoji: string; staple: boolean; category: string };
 export type LearningEventRow = { id: number; type: string; needId?: string; label?: string; value?: unknown; createdAt: string };

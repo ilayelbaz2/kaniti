@@ -15,7 +15,7 @@ const MODEL = process.env.KANITI_MODEL ?? 'claude-opus-5-5';
 const need = { type: 'string', description: 'Concept id from the catalog, e.g. EGGS, TUNA' };
 const tools: Anthropic.Beta.BetaTool[] = [
   { name: 'update_stock', description: 'User reports how much of something is at home ("יש 10 ביצים", "אין טונה", "יש מלא פסטה"). Use qty for exact numbers in stock units, else level.', input_schema: { type: 'object', properties: { need_id: need, qty: { type: 'number' }, level: { type: 'string', enum: ['none', 'little', 'some', 'lots'] } }, required: ['need_id'] } },
-  { name: 'update_preference', description: 'A LASTING preference about a product ("לא אכפת לי איזה מרכך" → category_flexible; "רק קוקה קולה זירו" → exact_product + preferred brand; "אל תציע לי X" → never_suggest; "אני לא אוהב את הטונה הזאת" → dislike_current).', input_schema: { type: 'object', properties: { need_id: need, flexibility: { type: 'string', enum: ['exact_product', 'brand_flexible', 'category_flexible', 'exploratory'] }, preferred_brands: { type: 'array', items: { type: 'string' } }, forbidden_brands: { type: 'array', items: { type: 'string' } }, never_suggest: { type: 'boolean' }, deal_sensitivity: { type: 'string', enum: ['low', 'medium', 'high'] }, dislike_current: { type: 'boolean' } }, required: ['need_id'] } },
+  { name: 'update_preference', description: 'A LASTING preference about a product ("לא אכפת לי איזה מרכך" → category_flexible; "רק קוקה קולה זירו" → exact_product + preferred brand; "אל תציע לי X" → never_suggest; "אני לא אוהב את הטונה הזאת" → dislike_current).', input_schema: { type: 'object', properties: { need_id: need, flexibility: { type: 'string', enum: ['exact_product', 'brand_flexible', 'category_flexible', 'exploratory'] }, preferred_brands: { type: 'array', items: { type: 'string' } }, forbidden_brands: { type: 'array', items: { type: 'string' } }, never_suggest: { type: 'boolean' }, deal_sensitivity: { type: 'string', enum: ['low', 'medium', 'high'] }, dislike_current: { type: 'boolean' }, about_current_item: { type: 'boolean', description: 'true when the user refers to "this brand/product" without naming it' } } } },
   { name: 'add_item', description: 'Add something to the current basket. only_if_good_price for "אם יש מבצע/מחיר טוב". Use new_label only if nothing in the catalog fits.', input_schema: { type: 'object', properties: { need_id: need, new_label: { type: 'string' }, quantity: { type: 'number', description: 'packs' }, only_if_good_price: { type: 'boolean' } } } },
   { name: 'remove_item', description: 'Remove from basket. temporary=true for "הפעם"/this shop only (the default); permanent dislikes go to update_preference.', input_schema: { type: 'object', properties: { need_id: need, temporary: { type: 'boolean' } }, required: ['need_id', 'temporary'] } },
   { name: 'set_quantity', description: 'Change quantity (packs) of a basket item.', input_schema: { type: 'object', properties: { need_id: need, quantity: { type: 'number' } }, required: ['need_id', 'quantity'] } },
@@ -28,6 +28,8 @@ const tools: Anthropic.Beta.BetaTool[] = [
   { name: 'set_budget', description: 'Cap for this basket ("אל תעבור 650").', input_schema: { type: 'object', properties: { cap: { type: 'number' } }, required: ['cap'] } },
   { name: 'show_stock', description: 'What is probably missing / what do we have at home.', input_schema: { type: 'object', properties: {} } },
   { name: 'confirm_purchase', description: 'User says they bought/ordered.', input_schema: { type: 'object', properties: {} } },
+  { name: 'this_time_only', description: 'A TEMPORARY instruction for the current shop only: "אל תקנה X הפעם" (mode skip) or "הפעם אני רוצה X" (mode include). Does not change habits.', input_schema: { type: 'object', properties: { need_id: need, mode: { type: 'string', enum: ['skip', 'include'] }, quantity: { type: 'number' } }, required: ['need_id', 'mode'] } },
+  { name: 'prepare_cart', description: 'Prepare the real online cart at a supermarket ("תכין לי עגלה בשופרסל"). provider_id one of: shufersal, ramilevy, victory, ybitan, carrefour, tivtaam, keshet, quik. Omit to use the recommended store. Never places an order.', input_schema: { type: 'object', properties: { provider_id: { type: 'string' } } } },
   { name: 'reply', description: 'Short Hebrew reply when no action fits (small talk, a clarifying question).', input_schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
 ];
 
@@ -49,8 +51,8 @@ function toAction(name: string, i: In, text: string): Action | { say: string } |
   const valid = id && allConcepts().some((c) => c.id === id) ? id : undefined;
   switch (name) {
     case 'update_stock': return valid ? { type: 'updateHouseholdStock', needId: valid, qty: n(i.qty), level: s(i.level) as StockLevel | undefined, raw: text } : null;
-    case 'update_preference': return valid ? {
-      type: 'updatePreference', needId: valid, flexibility: s(i.flexibility) as Flexibility | undefined,
+    case 'update_preference': return valid || i.about_current_item ? {
+      type: 'updatePreference', needId: valid ?? 'FOCUS', flexibility: s(i.flexibility) as Flexibility | undefined,
       preferredBrands: Array.isArray(i.preferred_brands) ? (i.preferred_brands as string[]) : undefined,
       forbiddenBrands: Array.isArray(i.forbidden_brands) ? (i.forbidden_brands as string[]) : undefined,
       neverSuggest: i.never_suggest === true ? true : undefined, active: i.never_suggest === true ? false : undefined,
@@ -64,10 +66,12 @@ function toAction(name: string, i: In, text: string): Action | { say: string } |
     case 'compare_stores': return { type: 'compareProviders' };
     case 'price_lookup': return valid ? { type: 'searchProductPrices', needId: valid, query: valid } : null;
     case 'promotions': return { type: 'searchPromotions', needId: valid };
-    case 'explain': return { type: 'explainDecision', needId: valid, about: i.about_store ? 'store' : undefined };
+    case 'explain': return { type: 'explainDecision', needId: valid, needIds: Array.isArray(i.need_ids) ? (i.need_ids as string[]) : undefined, about: i.about_store ? 'store' : undefined };
     case 'set_budget': return n(i.cap) ? { type: 'setBudget', cap: n(i.cap)! } : null;
     case 'show_stock': return { type: 'showStock' };
     case 'confirm_purchase': return { type: 'confirmPurchase' };
+    case 'this_time_only': return valid ? { type: 'setTemporaryInstruction', needId: valid, mode: i.mode === 'include' ? 'include' : 'skip', quantity: n(i.quantity) } : null;
+    case 'prepare_cart': return { type: 'prepareProviderCart', providerId: s(i.provider_id) };
     case 'reply': return s(i.text) ? { say: s(i.text)! } : null;
   }
   return null;

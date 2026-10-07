@@ -17,6 +17,7 @@ export function Onboarding({ onDone }: { onDone: (s: AppState) => void }) {
   const [kids, setKids] = useState<number[]>([]);
   const [kosher, setKosher] = useState(false);
   const [dairy, setDairy] = useState(false);
+  const [dairyWho, setDairyWho] = useState<'all' | 'kids'>('kids');
   const [veg, setVeg] = useState(false);
   const [otherOn, setOtherOn] = useState(false);
   const [other, setOther] = useState('');
@@ -67,7 +68,7 @@ export function Onboarding({ onDone }: { onDone: (s: AppState) => void }) {
     setSaving(true);
     try {
       const s = await api.onboarding({
-        adults, children: kids.map((age) => ({ age })), kosher, dairyAllergy: dairy, vegetarian: veg,
+        adults, children: kids.map((age) => ({ age })), kosher, dairyAllergy: dairy, dairyAllergyWho: dairyWho, vegetarian: veg,
         otherConstraint: otherOn ? other : undefined, address: { city: city.trim(), street: street.trim() || undefined },
         onlineProviders: chosen, physicalStores: physical, flex, staples, customStaples: custom, threshold: threshold ?? 60,
       });
@@ -120,6 +121,16 @@ export function Onboarding({ onDone }: { onDone: (s: AppState) => void }) {
               <button key={t} className={`big-card ${on ? 'on' : ''}`} onClick={() => set(!on)}><span className="emo">{emo}</span><span className="t">{t}</span></button>
             ))}
           </div>
+          {dairy && (
+            <div className="card stack">
+              <b>האלרגיה לחלב — של מי?</b>
+              <div className="chips">
+                <button className={`chip ${dairyWho === 'kids' ? 'on' : ''}`} onClick={() => setDairyWho('kids')}>רק הילד/ה</button>
+                <button className={`chip ${dairyWho === 'all' ? 'on' : ''}`} onClick={() => setDairyWho('all')}>כל הבית</button>
+              </div>
+              <div className="faint">{dairyWho === 'kids' ? 'אצלכם יהיו מוצרי חלב, אבל מה שמיועד לילד (מעדנים, ממרחים) — רק פרווה.' : 'לא אציע שום מוצר חלבי.'}</div>
+            </div>
+          )}
           {otherOn && <input className="field" placeholder="למשל: בלי גלוטן" value={other} onChange={(e) => setOther(e.target.value)} autoFocus />}
         </div>
       )}
@@ -140,7 +151,7 @@ export function Onboarding({ onDone }: { onDone: (s: AppState) => void }) {
                 <button key={d.providerId} className={`provider-row ${chosen.includes(d.providerId) ? 'on' : ''}`} onClick={() => toggle(chosen, d.providerId, setChosen)}>
                   <span className="check">{chosen.includes(d.providerId) ? '✓' : ''}</span>
                   <span className="grow">
-                    <div className="row"><b>{d.name}</b>{d.delivers === true ? <span className="tag live">שולחים</span> : d.delivers === null ? <span className="tag estimate">לא בטוח</span> : <span className="tag need">לא באזור</span>}</div>
+                    <div className="row"><b>{d.name}</b>{d.status === 'confirmed' ? <span className="tag live">משלוח מאומת</span> : d.status === 'likely' || d.delivers === true ? <span className="tag live">כנראה משלחים</span> : d.status === 'unavailable' || d.delivers === false ? <span className="tag need">לא באזור</span> : <span className="tag estimate">לא אומת</span>}</div>
                     <div className="faint">{d.note}</div>
                   </span>
                 </button>
@@ -189,7 +200,7 @@ export function Onboarding({ onDone }: { onDone: (s: AppState) => void }) {
         <div className="onb-body" key="s4">
           <h1>מה כמעט תמיד צריך להיות בבית?</h1>
           <div className="chips">
-            {catalog.filter((c) => c.staple || showAll).map((c) => (
+            {catalog.filter((c) => (c.staple || showAll) && !(dairy && (dairyWho === 'all' || kids.length) && c.id === 'KIDS_DAIRY') && !(c.id === 'DAIRY_FREE_DESSERT' && !(dairy && kids.length))).map((c) => (
               <button key={c.id} className={`chip ${staples.includes(c.id) ? 'on' : ''}`} style={{ fontSize: 16, padding: '9px 14px' }} onClick={() => toggle(staples, c.id, setStaples)}>{c.emoji} {c.label}</button>
             ))}
             {custom.map((c) => <button key={c} className="chip on" onClick={() => setCustom(custom.filter((x) => x !== c))}>🛒 {c} ×</button>)}

@@ -35,10 +35,11 @@ function Learned({ ctx }: { ctx: Ctx }) {
   const learning = active.filter((n) => n.qtySource === 'default' && n.flexConfidence < 0.5);
   const rest = active.filter((n) => !learning.includes(n));
   const groups: [string, HouseholdNeed[]][] = [
-    ['קבועים', rest.filter((n) => n.flexibility === 'exact_product')],
-    ['קונים בקביעות', rest.filter((n) => n.flexibility === 'brand_flexible')],
-    ['בחירות גמישות', rest.filter((n) => n.flexibility === 'category_flexible' || n.flexibility === 'exploratory')],
-    ['עוד לומד', learning],
+    ['חובה (אלרגיות והגבלות)', active.filter((n) => n.hardConstraints.length)],
+    ['קבועים', rest.filter((n) => n.flexibility === 'exact_product' && !n.hardConstraints.length)],
+    ['קונים בקביעות', rest.filter((n) => n.flexibility === 'brand_flexible' && !n.hardConstraints.length)],
+    ['בחירות גמישות', rest.filter((n) => (n.flexibility === 'category_flexible' || n.flexibility === 'exploratory') && !n.hardConstraints.length)],
+    ['עוד לומד', learning.filter((n) => !n.hardConstraints.length)],
   ];
   const never = state.needs.filter((n) => n.neverSuggest && !n.hardConstraints.length);
   const constraints = [h.kosher ? 'שומרים כשרות' : '', ...h.allergies.map((a) => `אלרגיה ל${a}`), ...h.dietNotes].filter(Boolean);
@@ -99,7 +100,8 @@ function NeedCard({ n, ctx }: { n: HouseholdNeed; ctx: Ctx }) {
         <button className="link" onClick={() => setEdit(!edit)}>{edit ? 'סגור' : 'ערוך'}</button>
       </div>
       <div className="small muted">~{fmt(n.typical14DayQty)} לשבועיים · ביטחון: {conf}{n.stockAsOf ? ` · בבית עכשיו ~${fmt(stock)}` : ''}</div>
-      <div className="small">{FLEX_SHORT[n.flexibility]}{n.preferredBrands.length ? ` · ${n.preferredBrands.join(', ')}` : ''}{n.forbiddenBrands.length ? ` · בלי ${n.forbiddenBrands.join(', ')}` : ''}</div>
+      {n.hardConstraints.length > 0 && <div className="chips">{n.hardConstraints.map((h) => <span key={h} className="chip on">🛡️ חובה: {h}</span>)}</div>}
+      <div className="small">{FLEX_SHORT[n.flexibility]}{n.preferredBrands.length ? ` · ${n.preferredBrands.join(', ')}` : ''}{n.forbiddenBrands.length ? ` · בלי ${n.forbiddenBrands.join(', ')}` : ''}{n.dealSensitivity === 'high' ? ' · פתוחים למבצעים' : ''}</div>
       {n.id === 'COLA_ZERO' && n.flexConfidence < 0.5 && (
         <div className="chips"><button className="chip" onClick={() => patch({ flexibility: 'exact_product', preferredBrands: ['קוקה קולה'] })}>רק Coca-Cola</button><button className="chip" onClick={() => patch({ flexibility: 'brand_flexible' })}>אפשר חלופות</button></div>
       )}
