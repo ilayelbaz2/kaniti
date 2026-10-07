@@ -11,16 +11,16 @@ async function call<T>(path: string, body?: unknown, method?: string): Promise<T
   return data as T;
 }
 
-export type DeliveryResult = { providerId: string; name: string; status?: 'confirmed' | 'unavailable' | 'user_action_required' | 'unknown'; delivers: boolean | null; note: string; deliveryFee?: number; checkedLive: boolean };
+export type DeliveryResult = { providerId: string; name: string; status?: 'confirmed' | 'unavailable' | 'user_action_required' | 'unknown'; needsLogin?: boolean; addressText?: string; delivers: boolean | null; note: string; deliveryFee?: number; minOrder?: number; checkedLive: boolean };
 export type StoreOption = { storeId: string; name: string; city: string; address?: string };
-export type CatalogItem = { id: string; label: string; emoji: string; staple: boolean; category: string };
+export type CatalogItem = { id: string; label: string; emoji: string; staple: boolean; category: string; group: string; kidItem: boolean; dairy: boolean };
 export type LearningEventRow = { id: number; type: string; needId?: string; label?: string; value?: unknown; createdAt: string };
 
 export const api = {
   state: () => call<AppState>('/state'),
   catalog: () => call<CatalogItem[]>('/catalog'),
   providers: () => call<{ online: { id: string; name: string; deliveryFee: number }[]; physicalChains: { id: string; name: string }[] }>('/providers'),
-  deliveryCheck: (city: string, street?: string) => call<DeliveryResult[]>('/delivery-check', { city, street }),
+  deliveryCheck: (city: string, street?: string, providerId?: string) => call<DeliveryResult[]>('/delivery-check', { city, street, providerId }),
   stores: (chainId: string, city: string) => call<StoreOption[]>(`/stores/${chainId}?city=${encodeURIComponent(city)}`),
   onboarding: (body: unknown) => call<AppState>('/onboarding', body),
   patchHousehold: (body: unknown) => call<AppState>('/household', body, 'PATCH'),

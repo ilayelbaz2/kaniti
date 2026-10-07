@@ -215,6 +215,8 @@ export type ProviderDelivery = {
 export type DeliveryAvailability = {
   providerId: string;
   status?: DeliveryStatus;
+  needsLogin?: boolean; // exact-address verification needs the household's own login on the site
+  addressText?: string; // display-safe address as the site resolved it
   delivers: boolean | null; // null = could not determine
   note: string;
   deliveryFee?: number;

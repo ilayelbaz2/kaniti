@@ -25,7 +25,10 @@ export type OnboardingInput = {
   physicalStores: { chainId: string; storeId: string; name: string }[];
   flex: Partial<Record<'COLA_ZERO' | 'LAUNDRY_SOFTENER' | 'CREAM_CHEESE', 'strict' | 'deal' | 'any'>>;
   staples: string[];
-  customStaples: string[];
+  customStaples: (string | { label: string; level: 'always' | 'sometimes' })[];
+  /** Per item: always / sometimes needed at home, or "not us". Replaces `staples` when present. */
+  stapleLevels?: Record<string, 'always' | 'sometimes' | 'no'>;
+  annoyText?: string;
   threshold: number;
   dairyAllergyWho?: 'all' | 'kids';
   deliveryStatus?: Record<string, import('../shared/types.ts').DeliveryStatus>;
@@ -64,15 +67,24 @@ export function completeOnboarding(input: OnboardingInput): Household {
   // A child with a dairy allergy: their desserts become dairy-free desserts.
   if (kidsOnly && input.staples.includes('KIDS_DAIRY')) input.staples = [...input.staples.filter((x) => x !== 'KIDS_DAIRY'), 'DAIRY_FREE_DESSERT'];
 
-  for (const label of input.customStaples.map((s) => s.trim()).filter(Boolean)) {
-    input.staples.push(customConceptFor(label).id);
+  const levels: Record<string, 'always' | 'sometimes' | 'no'> = { ...(input.stapleLevels ?? {}) };
+  if (!input.stapleLevels) for (const id of input.staples) levels[id] = 'always';
+  if (kidsOnly && levels.KIDS_DAIRY && levels.KIDS_DAIRY !== 'no') { levels.DAIRY_FREE_DESSERT = levels.KIDS_DAIRY; delete levels.KIDS_DAIRY; }
+  for (const cs of input.customStaples ?? []) {
+    const label = (typeof cs === 'string' ? cs : cs.label).trim();
+    if (label) levels[customConceptFor(label).id] = typeof cs === 'string' ? 'always' : cs.level;
   }
+  input.staples = Object.entries(levels).filter(([, l]) => l !== 'no').map(([id]) => id);
 
   const kids = input.children.length;
   for (const concept of allConcepts()) {
     const answer = input.flex[concept.id as keyof OnboardingInput['flex']];
     const n: HouseholdNeed = store.need(concept.id) ?? newNeed(concept, input.adults, kids);
     n.active = input.staples.includes(concept.id);
+    // Staple = "don't let it run out". How often it is bought stays with the replenishment engine.
+    const level = levels[concept.id];
+    n.staple = level === 'always' || level === 'sometimes' ? level : undefined;
+    if (level === 'no') n.neverSuggest = true; // "לא אצלנו" — reversible in the household screen
     if (answer) {
       n.flexibility = FLEX_FROM_ANSWER[answer];
       n.flexConfidence = 0.8;

@@ -61,6 +61,22 @@ export function parseZuz(providerId: string, json: { products?: ZProduct[] }): P
   }).filter((r) => r.price > 0 && r.name);
 }
 
+type ZAreasResponse = { areas?: { id: number; name: string; branchId?: number; deliveryAreaPrice?: number; deliveryMinimumCost?: number | null }[]; addressComponents?: { long_name: string; types: string[] }[]; error?: string };
+
+/** Turns the site's address→area lookup into a delivery result. 200+areas = the site delivers to this exact address. */
+export function zuzAddressResult(chain: ZuzChain, status: number, j: ZAreasResponse | null): DeliveryAvailability {
+  const comp = (t: string) => j?.addressComponents?.find((c) => c.types.includes(t))?.long_name;
+  const addressText = comp('route') ? [[comp('route'), comp('street_number')].filter(Boolean).join(' '), comp('locality')].filter(Boolean).join(', ') : undefined;
+  const area = j?.areas?.[0];
+  if (status === 200 && area) {
+    if (area.branchId) kvSet(`provider:${chain.id}:branch`, area.branchId);
+    return { providerId: chain.id, status: 'confirmed', delivers: true, checkedLive: true, addressText, deliveryFee: area.deliveryAreaPrice ?? chain.fee, minOrder: area.deliveryMinimumCost ?? chain.minOrder, note: `האתר מאשר משלוח לכתובת${addressText ? ` (${addressText})` : ''} — אזור ${area.name}` };
+  }
+  if (status === 404 || (status === 200 && !area)) return { providerId: chain.id, status: 'unavailable', delivers: false, checkedLive: true, addressText, note: 'לפי האתר, הכתובת מחוץ לאזורי המשלוח של הרשת.' };
+  if (status === 400) return { providerId: chain.id, status: 'unknown', delivers: null, checkedLive: true, note: 'האתר לא זיהה את הכתובת — בדקו רחוב ומספר בית.' };
+  return { providerId: chain.id, status: 'unknown', delivers: null, checkedLive: false, note: `לא הצלחתי לבדוק כרגע (HTTP ${status}).` };
+}
+
 export function zuzProvider(chain: ZuzChain): GroceryProvider {
   const key = `provider:${chain.id}:branch`;
   const branch = () => kvGet<number>(key) ?? chain.defaultBranch;
@@ -72,15 +88,19 @@ export function zuzProvider(chain: ZuzChain): GroceryProvider {
   return {
     id: chain.id, name: chain.name, kind: 'online', deliveryFee: chain.fee, minOrder: chain.minOrder,
     async checkDelivery(address: Address): Promise<DeliveryAvailability> {
+      // Exact address: the site's own lookup geocodes the street address against the chain's delivery polygons.
+      if (address.street) {
+        const url = `${chain.host}/v2/retailers/${chain.retailerId}/areas?appId=4&languageId=1&deliveryTypeId=1&deliveryTypeId=5&query=${encodeURIComponent(`${address.street}, ${address.city}`)}`;
+        const res = await fetch(url, { headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126 Safari/537.36' }, signal: AbortSignal.timeout(12000) });
+        const j = (await res.json().catch(() => null)) as ZAreasResponse | null;
+        return zuzAddressResult(chain, res.status, j);
+      }
       const list = await branches();
       const local = list.filter((b) => sameCity(b.city, address.city) || sameCity(b.name, address.city));
       const pick = local.find((b) => /אונליין|online|אינטרנט/i.test(b.name)) ?? local[0];
-      if (pick) {
-        kvSet(key, pick.id);
-        return { providerId: chain.id, status: 'unknown', delivers: true, checkedLive: true, deliveryFee: chain.fee, minOrder: chain.minOrder, note: `יש סניף ב${address.city} (${pick.name}, #${pick.id}) — לפי רשימת הסניפים, לא אומת מול הכתובת` };
-      }
-      if (!chain.defaultBranch && list[0]) kvSet(key, list[0].id);
-      return { providerId: chain.id, status: 'unknown', delivers: null, checkedLive: true, deliveryFee: chain.fee, minOrder: chain.minOrder, note: `אין סניף של הרשת ב${address.city}. ייתכן שמשלחים ממרכז הפצה — לא אומת` };
+      if (pick) kvSet(key, pick.id);
+      else if (!chain.defaultBranch && list[0]) kvSet(key, list[0].id);
+      return { providerId: chain.id, status: 'unknown', delivers: pick ? true : null, checkedLive: true, deliveryFee: chain.fee, minOrder: chain.minOrder, note: 'בלי רחוב ומספר בית אי אפשר לבדוק משלוח לכתובת מדויקת.' };
     },
     async searchProducts(query) {
       let bid = branch();

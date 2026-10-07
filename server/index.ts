@@ -5,8 +5,9 @@ import type { AppState, ChatMessage } from '../shared/types.ts';
 import { kvGet, kvSet, store } from './db.ts';
 import { advanceDays, nowIso, uid } from './clock.ts';
 import { completeOnboarding, estimateStock, getConcept, learnFromQtyFeedback, nextShopInDays, updateNeed, type OnboardingInput } from './state.ts';
-import { CONCEPTS } from './catalog.ts';
-import { parseMessage } from './chat/parser.ts';
+import { CONCEPTS, stapleGroupOf } from './catalog.ts';
+import { findConcepts, parseMessage } from './chat/parser.ts';
+import { addressKey, recordDelivery } from './cart/delivery.ts';
 import { ACTION_ORDER } from './chat/actions.ts';
 import { executeActions, executeCommand } from './chat/execute.ts';
 import { interpretWithLlm, llmEnabled } from './chat/llm.ts';
@@ -47,7 +48,7 @@ function appState(): AppState {
 }
 
 app.get('/api/state', wrap(() => appState()));
-app.get('/api/catalog', wrap(() => CONCEPTS.map((c) => ({ id: c.id, label: c.label, emoji: c.emoji, staple: !!c.staple, category: c.category }))));
+app.get('/api/catalog', wrap(() => CONCEPTS.map((c) => ({ id: c.id, label: c.label, emoji: c.emoji, staple: !!c.staple, category: c.category, group: stapleGroupOf(c), kidItem: !!c.kidItem, dairy: !!c.dairy }))));
 
 // ---------- onboarding ----------
 
@@ -57,13 +58,21 @@ app.get('/api/providers', wrap(() => ({
 })));
 
 app.post('/api/delivery-check', wrap(async (req) => {
-  const address = { city: String(req.body.city ?? ''), street: req.body.street };
-  const results = await Promise.all(onlineCatalog().map(async (p) => {
+  const address = { city: String(req.body.city ?? '').trim(), street: req.body.street ? String(req.body.street).trim() : undefined };
+  const only = req.body.providerId ? String(req.body.providerId) : undefined;
+  const results = await Promise.all(onlineCatalog().filter((p) => !only || p.id === only).map(async (p) => {
     try { return { ...(await withTimeout(p.checkDelivery(address), 15000, p.name)), name: p.name }; } catch (e) {
       return { providerId: p.id, name: p.name, status: 'unknown' as const, delivers: null, checkedLive: false, note: `לא הצלחתי לבדוק כרגע (${(e as Error).message})`, deliveryFee: p.deliveryFee };
     }
   }));
-  kvSet('deliveryStatus', Object.fromEntries(results.map((r) => [r.providerId, r.status ?? 'unknown'])));
+  // Results the chain's own site gave for this exact address are kept like any other provider-page check.
+  for (const r of results) {
+    if (r.status === 'confirmed' || r.status === 'unavailable') {
+      recordDelivery({ providerId: r.providerId, deliveryStatus: r.status, confirmedAddressText: r.addressText, deliveryFee: r.deliveryFee, minimumOrder: r.minOrder,
+        restrictionMessage: r.status === 'unavailable' ? r.note : undefined, source: 'provider_page', checkedAt: nowIso(), addressKey: addressKey(address) });
+    }
+  }
+  kvSet('deliveryStatus', { ...(kvGet<Record<string, string>>('deliveryStatus') ?? {}), ...Object.fromEntries(results.map((r) => [r.providerId, r.status ?? 'unknown'])) });
   return results;
 }));
 
@@ -78,7 +87,14 @@ app.get('/api/stores/:chainId', wrap(async (req) => {
 }));
 
 app.post('/api/onboarding', wrap((req) => {
-  completeOnboarding({ ...(req.body as OnboardingInput), deliveryStatus: kvGet('deliveryStatus') ?? undefined });
+  const input = req.body as OnboardingInput;
+  // "יש עוד משהו שאתה תמיד מתעצבן כשנגמר?" — known products become staples, anything else a custom one.
+  if (input.annoyText?.trim()) {
+    const found = findConcepts(input.annoyText);
+    if (found.length) input.stapleLevels = { ...(input.stapleLevels ?? {}), ...Object.fromEntries(found.map((m) => [m.concept.id, 'always' as const])) };
+    else if (input.annoyText.trim().split(/\s+/).length <= 3) input.customStaples = [...(input.customStaples ?? []), { label: input.annoyText.trim(), level: 'always' }];
+  }
+  completeOnboarding({ ...input, deliveryStatus: kvGet('deliveryStatus') ?? undefined });
   const welcome: ChatMessage = {
     id: uid('m_'), role: 'assistant', createdAt: nowIso(),
     text: 'אני כבר יודע את הבסיס.\nרוצה שאנסה לבנות את הקנייה הראשונה שלכם?',

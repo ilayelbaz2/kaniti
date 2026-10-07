@@ -79,10 +79,34 @@ export const CONCEPTS: Concept[] = [
   c({ id: 'LAUNDRY_DETERGENT', label: 'ג׳ל כביסה', emoji: '🧺', category: 'cleaning', synonyms: ['ג\'ל כביסה', 'גל כביסה', 'אבקת כביסה', 'נוזל כביסה', 'כביסה'], query: 'ג\'ל כביסה', mustInclude: ['כביסה'], exclude: ['מרכך', 'סל', 'מתקן', 'וניש', 'קליה', 'מסיר', 'אסטוניש'], brands: ['סנו', 'אריאל', 'פרסיל', 'בדין'], stockUnit: 'בקבוקים', packLabel: 'בקבוק', packSize: 1, base14: 0.5, childFactor: 0.4, wasteRisk: 'low', shelfStable: true, defaultFlex: 'brand_flexible', staple: true, dealSensitivity: 'high' }),
   c({ id: 'LAUNDRY_SOFTENER', label: 'מרכך כביסה', emoji: '🧴', category: 'cleaning', synonyms: ['מרכך כביסה', 'מרכך', 'מרככים'], query: 'מרכך כביסה', mustInclude: ['מרכך'], exclude: ['שיער', 'מים'], brands: ['בדין', 'סנו', 'קוטקס', 'לנור', 'מקסימה'], stockUnit: 'בקבוקים', packLabel: 'בקבוק', packSize: 1, base14: 0.5, childFactor: 0.4, wasteRisk: 'low', shelfStable: true, defaultFlex: 'brand_flexible', staple: true, dealSensitivity: 'high' }),
   c({ id: 'VANISH', label: 'ווניש / קליה', emoji: '✨', category: 'cleaning', synonyms: ['ווניש', 'וניש', 'קליה', 'vanish', 'מסיר כתמים'], query: 'וניש', mustInclude: ['וניש', 'ווניש', 'כתמים', 'קליה', 'vanish'], exclude: ['אסטוניש'], brands: ['וניש', 'סנו'], stockUnit: 'אריזות', packLabel: 'אריזה', packSize: 1, base14: 0.3, childFactor: 0.5, wasteRisk: 'low', shelfStable: true, defaultFlex: 'brand_flexible', staple: true, dealSensitivity: 'high' }),
+  c({ id: 'DISHWASHER_TABS', label: 'טבליות למדיח', emoji: '🍽️', category: 'cleaning', synonyms: ['טבליות למדיח', 'טבליות', 'קפסולות למדיח', 'מדיח'], query: 'טבליות למדיח כלים', mustInclude: ['מדיח'], alsoInclude: ['טבלי', 'קפסול', 'כמוסות', 'פודס'], exclude: ['מלח', 'מנקה מדיח', 'מבריק'], brands: ['פיירי', 'פיניש', 'סנו'], stockUnit: 'טבליות', packLabel: 'אריזה', packSize: 40, base14: 14, childFactor: 0.3, wasteRisk: 'low', shelfStable: true, defaultFlex: 'category_flexible', dealSensitivity: 'high' }),
+  c({ id: 'FLOOR_CLEANER', label: 'נוזל רצפות', emoji: '🪣', category: 'cleaning', synonyms: ['נוזל רצפות', 'נוזל לרצפה', 'סבון רצפה', 'אקונומיקה'], query: 'נוזל לניקוי רצפות', mustInclude: ['רצפ', 'אקונומיקה'], brands: ['סנו', 'מר פרופר', 'פרש'], stockUnit: 'בקבוקים', packLabel: 'בקבוק', packSize: 1, base14: 0.3, childFactor: 0.3, wasteRisk: 'low', shelfStable: true, defaultFlex: 'category_flexible', dealSensitivity: 'high' }),
+  c({ id: 'TRASH_BAGS', label: 'שקיות זבל', emoji: '🗑️', category: 'paper', synonyms: ['שקיות זבל', 'שקית זבל', 'שקיות אשפה'], query: 'שקיות אשפה', mustInclude: ['אשפה', 'זבל'], alsoInclude: ['שקי'], brands: ['סנו', 'פלסטו'], stockUnit: 'גלילים', packLabel: 'גליל', packSize: 1, base14: 0.5, childFactor: 0.3, wasteRisk: 'low', shelfStable: true, defaultFlex: 'category_flexible', dealSensitivity: 'high' }),
+  c({ id: 'PAPER_TOWELS', label: 'נייר סופג', emoji: '🧻', category: 'paper', synonyms: ['נייר סופג', 'מגבות נייר', 'נייר מטבח'], query: 'נייר סופג', mustInclude: ['סופג', 'מגבות נייר', 'נייר מטבח'], exclude: ['טואלט'], brands: ['לילי', 'סנו', 'טישו'], stockUnit: 'גלילים', packLabel: 'מארז', packSize: 4, base14: 2, childFactor: 0.3, wasteRisk: 'low', shelfStable: true, defaultFlex: 'category_flexible', dealSensitivity: 'high' }),
+  c({ id: 'WIPES', label: 'מגבונים', emoji: '🧼', category: 'kids', synonyms: ['מגבונים', 'מגבון', 'מגבונים לחים'], query: 'מגבונים לחים', mustInclude: ['מגבונ'], exclude: ['לניקוי רצפ', 'אסלה', 'משקפ'], brands: ['האגיס', 'טיטולים', 'בייבי'], stockUnit: 'חבילות', packLabel: 'חבילה', packSize: 1, base14: 0, childFactor: 3, wasteRisk: 'low', shelfStable: true, defaultFlex: 'category_flexible', dealSensitivity: 'high', kidItem: true }),
+  c({ id: 'DIAPERS', label: 'חיתולים', emoji: '👶', category: 'kids', synonyms: ['חיתולים', 'טיטולים', 'האגיס', 'פמפרס'], query: 'חיתולים', mustInclude: ['חיתול', 'טיטול', 'האגיס', 'פמפרס'], exclude: ['מגבונ', 'משחה'], brands: ['האגיס', 'טיטולים', 'פמפרס'], stockUnit: 'חבילות', packLabel: 'חבילה', packSize: 1, base14: 0, childFactor: 2, wasteRisk: 'low', shelfStable: true, defaultFlex: 'brand_flexible', dealSensitivity: 'high', kidItem: true }),
   c({ id: 'DISH_SOAP', label: 'סבון כלים', emoji: '🧽', category: 'cleaning', synonyms: ['סבון כלים', 'נוזל כלים', 'פיירי', 'סבון'], query: 'סבון כלים', mustInclude: ['כלים'], exclude: ['מדיח', 'מברשת'], brands: ['פיירי', 'סנו', 'פלמוליב'], stockUnit: 'בקבוקים', packLabel: 'בקבוק', packSize: 1, base14: 0.5, childFactor: 0.3, wasteRisk: 'low', shelfStable: true, defaultFlex: 'category_flexible', dealSensitivity: 'high' }),
 ];
 
 export const conceptById = new Map(CONCEPTS.map((x) => [x.id, x]));
+
+/** Groups for "things we don't want to run out of" (onboarding staples). */
+export type StapleGroup = 'מקרר' | 'מזווה' | 'ילד' | 'שתייה' | 'בשר/דגים' | 'חטיפים' | 'כביסה' | 'ניקיון' | 'נייר/בית';
+export const STAPLE_GROUPS: StapleGroup[] = ['מקרר', 'מזווה', 'ילד', 'שתייה', 'בשר/דגים', 'חטיפים', 'כביסה', 'ניקיון', 'נייר/בית'];
+export function stapleGroupOf(c: Concept): StapleGroup {
+  if (c.kidItem && c.category !== 'snacks') return 'ילד';
+  if (/^LAUNDRY_|^VANISH$/.test(c.id)) return 'כביסה';
+  switch (c.category) {
+    case 'dairy': case 'eggs': case 'produce': return 'מקרר';
+    case 'pantry': case 'bakery': return 'מזווה';
+    case 'kids': return 'ילד';
+    case 'drinks': return 'שתייה';
+    case 'meat': case 'fish': case 'frozen': return 'בשר/דגים';
+    case 'snacks': return 'חטיפים';
+    case 'cleaning': return 'ניקיון';
+    case 'paper': return 'נייר/בית';
+  }
+}
 
 export function defaultTypical14(concept: Concept, adults: number, kids: number): number {
   const scale = adults / 2 + (kids * concept.childFactor) / 2;
@@ -98,6 +122,8 @@ export function round1(n: number) {
 export function customConcept(id: string, label: string): Concept {
   return {
     id, label, emoji: '🛒', category: 'pantry', synonyms: [label], query: label, brands: [],
+    // The product name must at least contain the main word, so search noise is never taken as this item.
+    mustInclude: [label.trim().split(/\s+/).sort((a, b) => b.length - a.length)[0]].filter((w) => w && w.length >= 2),
     stockUnit: 'יח׳', packLabel: 'יח׳', packSize: 1, base14: 1, childFactor: 0.3, wasteRisk: 'medium',
     shelfStable: false, defaultFlex: 'brand_flexible', dealSensitivity: 'medium',
   };

@@ -46,8 +46,8 @@ export const shufersal: GroceryProvider = {
   async checkDelivery(address): Promise<DeliveryAvailability> {
     // No public address check — Shufersal Online delivers to most of the country. Be honest about it.
     return {
-      providerId: 'shufersal', status: 'unknown', delivers: true, checkedLive: false, deliveryFee: 35.9, minOrder: 150,
-      note: `שופרסל אונליין מגיעה לרוב הארץ. לא הצלחתי לאמת את ${address.city} מול האתר — כדאי לוודא בהזמנה הראשונה.`,
+      providerId: 'shufersal', status: 'user_action_required', needsLogin: true, delivers: true, checkedLive: false, deliveryFee: 35.9, minOrder: 150,
+      note: `שופרסל לא מאפשרת לבדוק כתובת בלי חשבון. אאמת את ${address.street ? `${address.street}, ` : ''}${address.city} באתר כשתתחברו (בהכנת העגלה או בבדיקת משלוח).`,
     };
   },
   async searchProducts(query) {
