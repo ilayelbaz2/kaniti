@@ -8,3 +8,4 @@ data/cache
 test-results
 data/*.md
 data/*.json
+*.tsbuildinfo
