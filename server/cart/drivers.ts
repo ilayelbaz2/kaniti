@@ -262,20 +262,37 @@ function zuzDriver(id: string, host: string): CartDriver {
       }`, lines);
     },
     async readCartLines(page) {
+      // Only the site's own server cart counts — never the page's local copy. The site's $http carries its session
+      // headers (a plain fetch may not); a short diagnostic is left on window for the live check.
       return inPage<CartReadback | null>(page, `async function () {
+        var diag = window.__kanitiCartDiag = { tries: [] };
         try {
           var inj = window.angular.element(document.body).injector(); var Cart = inj.get('Cart'); var Config = inj.get('Config');
-          var idOf = function (x) { return String(x.retailerProductId || (x.product && (x.product.id || x.product.productId)) || ''); };
+          var idOf = function (x) { return String(x.retailerProductId || (x.product && (x.product.id || x.product.productId)) || x.productId || ''); };
           var isProduct = function (x) { return !x.type || x.type === 1; };
           var t = Cart.total || {}; var total = Number(t.finalPriceForView != null ? t.finalPriceForView : t.priceForView);
-          if (Cart.serverCartId && Config.branch) {
-            var r = await fetch('/v2/retailers/' + Config.retailer.id + '/branches/' + Config.branch.id + '/carts/' + Cart.serverCartId + '?appId=4', { credentials: 'include', headers: { Accept: 'application/json' } });
-            var j = r.ok ? await r.json().catch(function () { return null; }) : null;
-            var lines = j && ((j.cart && j.cart.lines) || j.lines);
-            if (Array.isArray(lines)) return { lines: lines.filter(isProduct).map(function (x) { return { productId: idOf(x), quantity: Number(x.quantity) }; }), total: isFinite(total) ? total : undefined, source: 'server' };
-          }
-          return null; // only the site's own cart counts — never the page's local copy
-        } catch (e) { return null; }
+          diag.serverCartId = Cart.serverCartId || null; diag.branch = Config.branch ? Config.branch.id : null;
+          if (!Cart.serverCartId || !Config.branch) return null;
+          var url = '/v2/retailers/' + Config.retailer.id + '/branches/' + Config.branch.id + '/carts/' + Cart.serverCartId;
+          var linesOf = function (j) {
+            if (!j) return null; var c = j.cart || j; var ls = c.lines;
+            if (ls && !Array.isArray(ls) && typeof ls === 'object') ls = Object.keys(ls).map(function (k) { return ls[k]; });
+            return Array.isArray(ls) ? ls : null;
+          };
+          var done = function (ls) { return { lines: ls.filter(isProduct).map(function (x) { return { productId: idOf(x), quantity: Number(x.quantity) }; }), total: isFinite(total) ? total : undefined, source: 'server' }; };
+          try {
+            var r1 = await inj.get('$http').get(url, { params: { appId: 4 } });
+            var l1 = linesOf(r1.data);
+            diag.tries.push({ via: 'http', status: r1.status, keys: Object.keys(r1.data || {}).slice(0, 12), lines: l1 ? l1.length : null });
+            if (l1) return done(l1);
+          } catch (e) { diag.tries.push({ via: 'http', status: e && e.status, err: String((e && (e.statusText || e.message)) || e).slice(0, 120) }); }
+          var r = await fetch(url + '?appId=4', { credentials: 'include', headers: { Accept: 'application/json' } });
+          var j = r.ok ? await r.json().catch(function () { return null; }) : null;
+          var l2 = linesOf(j);
+          diag.tries.push({ via: 'fetch', status: r.status, keys: j ? Object.keys(j).slice(0, 12) : null, lines: l2 ? l2.length : null });
+          if (l2) return done(l2);
+          return null;
+        } catch (e) { diag.err = String(e).slice(0, 160); return null; }
       }`).catch(() => null);
     },
     async readDelivery(page, home) {

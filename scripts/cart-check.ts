@@ -12,6 +12,8 @@ const { chooseProduct } = await import('../server/engine/match.ts');
 const { newNeed } = await import('../server/state.ts');
 const { startCartJob, currentJob } = await import('../server/cart/prepare.ts');
 const { closeBrowser } = await import('../server/cart/browser.ts');
+const { cartDriver } = await import('../server/cart/drivers.ts');
+const cartDriverHome = (id: string) => cartDriver(id)!.homeUrl;
 import type { BasketQuote, QuoteLine } from '../shared/types.ts';
 
 const p = onlineCatalog().find((x) => x.id === providerId)!;
@@ -38,6 +40,11 @@ while (!['ready', 'partial', 'failed', 'unsupported'].includes(job.status) && Da
 }
 const report = { status: job.status, message: job.message, anonymous: job.anonymous, delivery: job.delivery, deliveryFee: job.deliveryFee, deliveryFeeEstimated: job.deliveryFeeEstimated, cartItemCount: job.cartItemCount, cartTotal: job.cartTotal, cartUrl: job.cartUrl, lines: job.lines.map((l) => ({ label: l.label, product: l.productName, state: l.state, reason: l.reason })) };
 console.log('CART-CHECK', JSON.stringify(report));
+try { // how the read-back went (ids/status only — no personal data)
+  const { pageFor } = await import('../server/cart/browser.ts');
+  const page = await pageFor(cartDriverHome(providerId));
+  console.log('READBACK-DIAG', JSON.stringify(await page.evaluate('window.__kanitiCartDiag || null')));
+} catch (e) { console.log('READBACK-DIAG unavailable', String(e).slice(0, 120)); }
 fs.mkdirSync('data', { recursive: true });
 fs.writeFileSync('data/cart-check.json', JSON.stringify(report, null, 1));
 await closeBrowser();
