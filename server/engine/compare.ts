@@ -8,6 +8,7 @@ import type { GroceryProvider } from '../providers/types.ts';
 import { chooseProduct, effPrice } from './match.ts';
 import { cartSupported } from '../cart/drivers.ts';
 import { basketKey } from '../service.ts';
+import { verifiedDelivery } from '../cart/delivery.ts';
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -47,16 +48,23 @@ export async function quoteOne(p: GroceryProvider, basket: Basket): Promise<Bask
       lines.push({ needId: it.needId, label: it.label, quantity: it.quantity, product: prod, lineTotal: r2(unit * it.quantity), substituted: choice.substituted });
     }
     const subtotal = r2(lines.reduce((s, l) => s + l.lineTotal, 0));
-    const fee = p.kind === 'online' ? (p.freeDeliveryFrom && subtotal >= p.freeDeliveryFrom ? 0 : p.deliveryFee) : 0;
+    // Delivery as the supermarket's own page showed it for the household's address (if checked); otherwise the
+    // chain's list fee, labelled as an estimate.
+    const delivery = p.kind === 'online' ? verifiedDelivery(p.id, store.household()?.homeAddress) : undefined;
+    const listFee = p.kind === 'online' ? (p.freeDeliveryFrom && subtotal >= p.freeDeliveryFrom ? 0 : p.deliveryFee) : 0;
+    const fee = delivery?.deliveryFee ?? listFee;
+    const minOrder = delivery?.minimumOrder ?? p.minOrder;
     const found = lines.filter((l) => !l.missing).length;
     return {
       ...base, ok: found > 0, lines, subtotal, deliveryFee: fee, total: r2(subtotal + fee),
-      minOrderIssue: p.minOrder && subtotal < p.minOrder ? `מינימום הזמנה ₪${p.minOrder}` : undefined,
+      minOrderIssue: minOrder && subtotal < minOrder ? `מינימום הזמנה ₪${minOrder}` : undefined,
       completeness: items.length ? found / items.length : 0,
       unavailableCount: lines.filter((l) => l.missing && !l.uncertain).length,
       uncertainCount: lines.filter((l) => l.uncertain).length,
       cartSupported: p.kind === 'online' && cartSupported(p.id),
-      deliveryStatus: p.kind === 'online' ? (store.household()?.deliveryStatus?.[p.id] ?? 'unknown') : undefined,
+      deliveryStatus: p.kind === 'online' ? (delivery?.deliveryStatus ?? 'unknown') : undefined,
+      deliveryFeeEstimated: p.kind === 'online' ? delivery?.deliveryFee === undefined : undefined,
+      delivery,
       substitutionsCount: lines.filter((l) => l.substituted).length,
       source: sources.has('demo') ? 'demo' : p.kind === 'physical' ? 'branch_data' : sources.size === 1 && sources.has('live') ? 'live' : 'estimate',
       error: found === 0 ? 'לא נמצאו מוצרים' : undefined,
@@ -90,14 +98,16 @@ export function rankQuotes(quotes: BasketQuote[], basket: Basket, threshold: num
   const adj = (q: BasketQuote) => q.total + q.lines.filter((l) => l.missing).reduce((s, l) => s + 1.25 * (medianLine(quotes, l.needId) || fallbackValue(basket, l.needId, l.quantity)) + 10, 0);
   const hardMissing = (q: BasketQuote) => q.lines.filter((l) => l.missing && hardNeeds.includes(l.needId)).length;
   const ok = quotes.filter((q) => q.ok);
-  const online = ok.filter((q) => q.kind === 'online').sort((a, b) => hardMissing(a) - hardMissing(b) || adj(a) - adj(b) || b.completeness - a.completeness);
+  // A chain whose own site said it doesn't deliver to this address is never recommended for delivery.
+  const noDelivery = (q: BasketQuote) => (q.deliveryStatus === 'unavailable' ? 1 : 0);
+  const online = ok.filter((q) => q.kind === 'online').sort((a, b) => noDelivery(a) - noDelivery(b) || hardMissing(a) - hardMissing(b) || adj(a) - adj(b) || b.completeness - a.completeness);
   const physical = ok.filter((q) => q.kind === 'physical').sort((a, b) => hardMissing(a) - hardMissing(b) || adj(a) - adj(b));
   const failed = quotes.filter((q) => !q.ok);
 
   let recommendation: Comparison['recommendation'] = { text: 'לא הצלחתי לקבל מחירים מאף רשת כרגע.', kind: 'none' };
-  const bo = online[0], bp = physical[0];
+  const bo = online.find((q) => !noDelivery(q)), bp = physical[0];
   if (bo) {
-    const next = online[1];
+    const next = online.filter((q) => !noDelivery(q))[1];
     const gap = next ? Math.round(adj(next) - adj(bo)) : 0;
     let text = `הייתי מזמין מ${bo.providerName}.`;
     if (next) {

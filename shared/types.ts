@@ -16,7 +16,7 @@ export type Household = {
   flexibilityStyle: 'strict' | 'balanced' | 'adventurous';
   shopEveryDays: number;
   onboardedAt?: string;
-  deliveryStatus?: Record<string, DeliveryStatus>; // per online provider, from the onboarding check
+  deliveryStatus?: Record<string, DeliveryStatus>; // legacy city-level onboarding check — never treated as confirmed
   childDairyAllergy?: boolean;
 };
 
@@ -159,7 +159,24 @@ export type ProductSearchResult = {
   fetchedAt: string;
 };
 
-export type DeliveryStatus = 'confirmed' | 'likely' | 'unknown' | 'unavailable';
+/** Delivery to the household's address, as the supermarket's own page shows it. Never inferred from city/branch. */
+export type DeliveryStatus = 'confirmed' | 'unavailable' | 'user_action_required' | 'unknown';
+
+/** What the supermarket page itself showed about delivery to the selected address. */
+export type ProviderDelivery = {
+  providerId: string;
+  deliveryStatus: DeliveryStatus;
+  confirmedAddressText?: string; // display-safe: street, number, city only
+  deliveryFee?: number; // as shown by the site
+  deliveryWindows?: string[];
+  minimumOrder?: number;
+  restrictionMessage?: string;
+  cartTotal?: number;
+  basketCompleteness?: number;
+  source: 'provider_page';
+  checkedAt: string;
+  addressKey?: string; // which stored household address this was checked against
+};
 
 export type DeliveryAvailability = {
   providerId: string;
@@ -201,6 +218,8 @@ export type BasketQuote = {
   uncertainCount?: number;
   cartSupported?: boolean; // Kaniti can prepare this provider's real online cart
   deliveryStatus?: DeliveryStatus;
+  deliveryFeeEstimated?: boolean; // true = the chain's list fee, not read from the supermarket page
+  delivery?: ProviderDelivery; // last delivery state read from the supermarket's own page (same address)
 };
 
 export type Comparison = {
@@ -262,6 +281,7 @@ export type CartJobStatus =
   | 'starting'
   | 'verification_required' // CAPTCHA / bot check — the user completes it in the supermarket window
   | 'login_required' // the user logs in (incl. OTP) in the supermarket window
+  | 'address_required' // the user selects / confirms the delivery address in the supermarket window
   | 'adding'
   | 'ready' // every planned item is in the supermarket cart
   | 'partial' // some items couldn't be added
@@ -295,7 +315,10 @@ export type CartJob = {
   preexistingItems?: number; // items that were already in the site's cart before Kaniti added its lines
   plannedTotal?: number; // Kaniti's quote for the same lines
   deliveryFee?: number;
+  deliveryFeeEstimated?: boolean; // the fee is the chain's list price, not what the site showed
   deliveryWindow?: string;
+  delivery?: ProviderDelivery; // read from the supermarket page after the cart was prepared
+  verifyOnly?: boolean; // only check delivery to the address — no items added
   substitutions: number;
   loginRequired: boolean;
   userAction?: string;

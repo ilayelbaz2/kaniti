@@ -61,7 +61,7 @@ export function demoProvider(id: string, name: string, fee: number): GroceryProv
   return {
     id, name, kind: 'online', deliveryFee: fee, minOrder: 150, freeDeliveryFrom: 400,
     async checkDelivery(): Promise<DeliveryAvailability> {
-      return { providerId: id, status: 'likely', delivers: true, note: 'דמו — לא נבדק מול הרשת', deliveryFee: fee, minOrder: 150, checkedLive: false };
+      return { providerId: id, status: 'unknown', delivers: true, note: 'דמו — לא נבדק מול הרשת', deliveryFee: fee, minOrder: 150, checkedLive: false };
     },
     async searchProducts(query: string): Promise<ProductSearchResult[]> {
       const concept = CONCEPTS.find((c) => c.query === query) ?? CONCEPTS.find((c) => c.label === query || c.synonyms.some((s) => query.includes(s)));

@@ -36,7 +36,7 @@ while (!['ready', 'partial', 'failed', 'unsupported'].includes(job.status) && Da
   job = currentJob()!;
   console.log(`  [${Math.round((Date.now() - t0) / 1000)}s] ${job.status}: ${job.message}`);
 }
-const report = { status: job.status, message: job.message, anonymous: job.anonymous, cartItemCount: job.cartItemCount, cartTotal: job.cartTotal, cartUrl: job.cartUrl, lines: job.lines.map((l) => ({ label: l.label, product: l.productName, state: l.state, reason: l.reason })) };
+const report = { status: job.status, message: job.message, anonymous: job.anonymous, delivery: job.delivery, deliveryFee: job.deliveryFee, deliveryFeeEstimated: job.deliveryFeeEstimated, cartItemCount: job.cartItemCount, cartTotal: job.cartTotal, cartUrl: job.cartUrl, lines: job.lines.map((l) => ({ label: l.label, product: l.productName, state: l.state, reason: l.reason })) };
 console.log('CART-CHECK', JSON.stringify(report));
 fs.mkdirSync('data', { recursive: true });
 fs.writeFileSync('data/cart-check.json', JSON.stringify(report, null, 1));

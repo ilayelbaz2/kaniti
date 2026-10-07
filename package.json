@@ -14,7 +14,8 @@
     "live-check": "tsx scripts/live-check.ts",
     "cart-check": "tsx scripts/cart-check.ts",
     "rehearsal": "tsx scripts/rehearsal.ts",
-    "match-report": "tsx scripts/match-report.ts"
+    "match-report": "tsx scripts/match-report.ts",
+    "home-validation": "tsx scripts/home-validation.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

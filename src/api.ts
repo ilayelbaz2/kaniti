@@ -11,7 +11,7 @@ async function call<T>(path: string, body?: unknown, method?: string): Promise<T
   return data as T;
 }
 
-export type DeliveryResult = { providerId: string; name: string; status?: 'confirmed' | 'likely' | 'unknown' | 'unavailable'; delivers: boolean | null; note: string; deliveryFee?: number; checkedLive: boolean };
+export type DeliveryResult = { providerId: string; name: string; status?: 'confirmed' | 'unavailable' | 'user_action_required' | 'unknown'; delivers: boolean | null; note: string; deliveryFee?: number; checkedLive: boolean };
 export type StoreOption = { storeId: string; name: string; city: string; address?: string };
 export type CatalogItem = { id: string; label: string; emoji: string; staple: boolean; category: string };
 export type LearningEventRow = { id: number; type: string; needId?: string; label?: string; value?: unknown; createdAt: string };
@@ -46,7 +46,7 @@ export const api = {
   purchase: (body: unknown) => call<{ purchase: Purchase; state: AppState }>('/purchase', body),
   purchases: () => call<Purchase[]>('/purchases'),
   feedback: (id: string, needId: string, value: string) => call<Purchase>(`/purchases/${id}/feedback`, { needId, value }),
-  prepareCart: (providerId?: string) => call<CartJob>('/cart/prepare', { providerId }),
+  prepareCart: (providerId?: string, verifyOnly = false) => call<CartJob>('/cart/prepare', { providerId, verifyOnly }),
   cartJob: () => call<CartJob | null>('/cart/job'),
   resumeCart: (withoutLogin = false) => call<CartJob | null>('/cart/resume', { withoutLogin }),
   cartSeed: () => call<{ providerId: string; providerName: string; total?: number; items: { needId: string; quantity: number; productName?: string; price?: number }[] } | null>('/cart/seed'),

@@ -189,7 +189,7 @@ app.post('/api/purchases/:id/feedback', wrap((req) => {
 
 // ---------- cart handoff (prepare the real supermarket cart; checkout stays on the supermarket site) ----------
 
-app.post('/api/cart/prepare', wrap(async (req) => svc.prepareProviderCart(req.body.providerId)));
+app.post('/api/cart/prepare', wrap(async (req) => svc.prepareProviderCart(req.body.providerId, !!req.body.verifyOnly)));
 app.get('/api/cart/job', wrap(() => cartJobs.currentJob()));
 app.post('/api/cart/resume', wrap((req) => { cartJobs.resume(!!req.body?.withoutLogin); return cartJobs.currentJob(); }));
 app.post('/api/cart/clear', wrap(() => { cartJobs.clearJob(); return { ok: true }; }));

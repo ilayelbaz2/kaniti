@@ -1,17 +1,19 @@
 // Prepares the real online cart at the chosen supermarket and stops at the cart page.
 // The user logs in / passes verification themselves in the supermarket window; checkout and payment stay
 // entirely on the supermarket's side. Kaniti never submits an order.
-import type { BasketQuote, CartJob, CartJobLine, CartJobStatus } from '../../shared/types.ts';
+import type { BasketQuote, CartJob, CartJobLine, CartJobStatus, ProviderDelivery } from '../../shared/types.ts';
 import { kvGet, kvSet, store } from '../db.ts';
 import { nowIso, uid } from '../clock.ts';
 import { DEMO } from '../providers/index.ts';
 import { cartDriver, type CartDriver, type CartLineIn } from './drivers.ts';
+import { assessDelivery, recordDelivery, stillValid, type AssessOpts } from './delivery.ts';
 
 let current: CartJob | null = kvGet<CartJob>('cartJob');
 let poke: (() => void) | null = null;
 const LOGIN_WAIT_MS = Number(process.env.KANITI_LOGIN_WAIT_MS ?? 10 * 60 * 1000);
 
-export const currentJob = () => current;
+/** The job as the UI should see it — a delivery result checked against an address that has since changed is not trusted. */
+export const currentJob = () => (current?.delivery ? { ...current, delivery: stillValid(current.delivery, store.household()?.homeAddress) } : current);
 
 function save(job: CartJob, patch: Partial<CartJob> & { status?: CartJobStatus }) {
   Object.assign(job, patch, { updatedAt: nowIso() });
@@ -19,9 +21,10 @@ function save(job: CartJob, patch: Partial<CartJob> & { status?: CartJobStatus }
 }
 
 let skipLogin = false;
-/** User says "I logged in / I finished the check" — re-check right away instead of waiting for the next poll.
- *  `withoutLogin` continues with an anonymous cart on sites that allow it. */
-export function resume(withoutLogin = false) { if (withoutLogin) skipLogin = true; poke?.(); }
+let skipAddress = false;
+/** User says "I logged in / I finished the check / I chose the address" — re-check right away instead of waiting for
+ *  the next poll. `skip` continues without login (anonymous cart, where allowed) or without a confirmed address. */
+export function resume(skip = false) { if (skip) { skipLogin = true; skipAddress = true; } poke?.(); }
 
 async function waitFor(check: () => Promise<boolean>, ms: number): Promise<boolean> {
   const until = Date.now() + ms;
@@ -33,9 +36,9 @@ async function waitFor(check: () => Promise<boolean>, ms: number): Promise<boole
   return false;
 }
 
-export type PrepareInput = { quote: BasketQuote; demo?: boolean };
+export type PrepareInput = { quote: BasketQuote; demo?: boolean; verifyOnly?: boolean };
 
-export function startCartJob({ quote }: PrepareInput, autorun = true): CartJob {
+export function startCartJob({ quote, verifyOnly }: PrepareInput, autorun = true): CartJob {
   const driver = cartDriver(quote.providerId);
   const lines: CartJobLine[] = quote.lines.map((l) => ({
     needId: l.needId, label: l.label, productId: l.product?.productId, productName: l.product?.name,
@@ -49,9 +52,10 @@ export function startCartJob({ quote }: PrepareInput, autorun = true): CartJob {
     status: driver ? 'starting' : 'unsupported',
     message: driver ? `פותח את ${quote.providerName}…` : `הכנת עגלה לא נתמכת ב${quote.providerName} — אפשר להזמין לפי הרשימה.`,
     startedAt: nowIso(), updatedAt: nowIso(), lines, substitutions: quote.substitutionsCount,
-    plannedTotal: quote.total, deliveryFee: quote.deliveryFee, loginRequired: false,
-    paymentBoundary: 'stopped_before_checkout', demo: DEMO || undefined,
+    plannedTotal: quote.total, deliveryFee: quote.deliveryFee, deliveryFeeEstimated: quote.deliveryFeeEstimated ?? true, loginRequired: false,
+    paymentBoundary: 'stopped_before_checkout', demo: DEMO || undefined, verifyOnly: verifyOnly || undefined,
   };
+  if (verifyOnly && driver) job.message = `פותח את ${quote.providerName} כדי לבדוק משלוח לכתובת שלכם…`;
   current = job;
   kvSet('cartJob', job);
   if (driver && autorun) void (DEMO ? runDemo(job) : run(job, driver)).catch((e) => save(job, { status: 'failed', message: `משהו השתבש בהכנת העגלה: ${(e as Error).message}` }));
@@ -87,9 +91,37 @@ async function run(job: CartJob, driver: CartDriver, deps?: BrowserDeps) {
     await page.goto(driver.homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   }
 
+  // Delivery to the household's address, read from the supermarket page itself. The user picks / confirms the
+  // address in the supermarket window; Kaniti never fills in or changes it.
+  const home = store.household()?.homeAddress;
+  const check = async (opts: AssessOpts = {}) =>
+    assessDelivery(job.providerId, await Promise.resolve().then(() => driver.readDelivery(page)).catch(() => ({ pageOk: false })), home, opts);
+  let delivery = await check();
+  if (delivery.deliveryStatus === 'user_action_required' && interactive()) {
+    skipAddress = false;
+    save(job, {
+      status: 'address_required', userAction: 'address', delivery,
+      message: `בחרו או אשרו את כתובת המשלוח שלכם באתר ${job.providerName}, בחלון שנפתח. ${delivery.restrictionMessage ?? ''} אני ממשיך ברגע שהאתר יציג את הכתובת.`.trim(),
+    });
+    await waitFor(async () => {
+      if (skipAddress) return true;
+      delivery = await check();
+      return delivery.deliveryStatus !== 'user_action_required';
+    }, LOGIN_WAIT_MS);
+  }
+  if (delivery.deliveryStatus === 'unavailable') {
+    recordDelivery(delivery);
+    return save(job, { status: 'failed', userAction: undefined, delivery, message: `${job.providerName}: הרשת לא שולחת כרגע לכתובת הזו. ${delivery.restrictionMessage ?? ''}`.trim() });
+  }
+  if (job.verifyOnly) {
+    recordDelivery(delivery);
+    return save(job, { status: 'ready', userAction: undefined, anonymous: !loggedIn, delivery, ...feeFrom(job, delivery), message: deliveryMessage(job.providerName, delivery) });
+  }
+  const firstAddress = delivery.confirmedAddressText;
+
   const todo: CartLineIn[] = job.lines.filter((l) => l.state === 'pending' && l.productId)
     .map((l) => ({ productId: l.productId!, quantity: l.quantity, name: l.productName ?? l.label, byWeight: l.byWeight }));
-  save(job, { status: 'adding', userAction: undefined, anonymous: !loggedIn, message: `מוסיף ${todo.length} פריטים לעגלה ב${job.providerName}…` });
+  save(job, { status: 'adding', userAction: undefined, anonymous: !loggedIn, delivery, message: `מוסיף ${todo.length} פריטים לעגלה ב${job.providerName}…` });
   const res = await driver.addItems(page, todo);
   for (const l of job.lines) {
     if (!l.productId || l.state !== 'pending') continue;
@@ -98,8 +130,31 @@ async function run(job: CartJob, driver: CartDriver, deps?: BrowserDeps) {
     else { l.state = 'failed'; l.reason = 'לא אושר על ידי האתר'; }
   }
   const cart = await driver.readCart(page).catch(() => ({}) as Awaited<ReturnType<CartDriver['readCart']>>);
+  // Re-read delivery with the items in the cart: fee / minimum / windows can depend on the cart, and the address
+  // must still be the one confirmed before adding (otherwise the cart is not tied to the household's address).
+  const added = job.lines.filter((l) => l.state === 'added').length;
+  // If the page can't be re-read now, the cart isn't proven to be tied to the address — the status says so.
+  delivery = await check({ previousAddressText: firstAddress, cartTotal: cart.total, basketCompleteness: job.lines.length ? added / job.lines.length : 0 });
+  recordDelivery(delivery);
   if (page.url() !== driver.cartUrl) await page.goto(driver.cartUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-  finish(job, driver.cartUrl, cart);
+  save(job, { delivery, ...feeFrom(job, delivery) });
+  finish(job, driver.cartUrl, { ...cart, deliveryWindow: delivery.deliveryWindows?.[0] ?? cart.deliveryWindow });
+}
+
+/** The site's own fee replaces the chain's list fee whenever the page showed one. */
+function feeFrom(job: CartJob, d: ProviderDelivery): Partial<CartJob> {
+  return d.deliveryFee !== undefined ? { deliveryFee: d.deliveryFee, deliveryFeeEstimated: false } : { deliveryFee: job.deliveryFee, deliveryFeeEstimated: true };
+}
+
+export const DELIVERY_TEXT: Record<ProviderDelivery['deliveryStatus'], string> = {
+  confirmed: 'משלוח לכתובת שלך מאומת',
+  unavailable: 'הרשת לא שולחת כרגע לכתובת הזו',
+  user_action_required: 'צריך לבחור/לאשר כתובת באתר הסופר',
+  unknown: 'לא הצלחתי לאמת משלוח לכתובת',
+};
+
+function deliveryMessage(name: string, d: ProviderDelivery) {
+  return `${name}: ${DELIVERY_TEXT[d.deliveryStatus]}${d.restrictionMessage ? ` — ${d.restrictionMessage}` : ''}`;
 }
 
 function finish(job: CartJob, cartUrl: string, cart: { itemCount?: number; total?: number; deliveryWindow?: string }) {
@@ -118,9 +173,12 @@ function finish(job: CartJob, cartUrl: string, cart: { itemCount?: number; total
 /** Demo mode (KANITI_DEMO=1): no browser, clearly labelled. Lets the UI flow be exercised offline. */
 async function runDemo(job: CartJob) {
   await new Promise((r) => setTimeout(r, 400));
+  const demoDelivery: ProviderDelivery = { providerId: job.providerId, deliveryStatus: 'unknown', restrictionMessage: 'מצב דמו — לא נבדק מול אתר הרשת.', source: 'provider_page', checkedAt: nowIso() };
+  if (job.verifyOnly) return save(job, { status: 'ready', delivery: demoDelivery, deliveryFeeEstimated: true, message: deliveryMessage(job.providerName, demoDelivery) });
   save(job, { status: 'adding', message: `מוסיף ${job.lines.filter((l) => l.state === 'pending').length} פריטים (דמו)…` });
   await new Promise((r) => setTimeout(r, 600));
   for (const l of job.lines) if (l.state === 'pending') l.state = 'added';
+  job.delivery = demoDelivery;
   const total = job.lines.filter((l) => l.state === 'added').reduce((s, l) => s + (l.price ?? 0) * l.quantity, 0) + (job.deliveryFee ?? 0);
   finish(job, '#demo-cart', { total: Math.round(total * 100) / 100, itemCount: job.lines.filter((l) => l.state === 'added').length });
 }
@@ -143,8 +201,8 @@ export function cartSeed() {
 }
 
 /** Test hook: run a job against a fake driver/browser. */
-export async function _runForTest(quote: BasketQuote, driver: CartDriver, deps: BrowserDeps) {
-  const job = startCartJob({ quote }, false);
+export async function _runForTest(quote: BasketQuote, driver: CartDriver, deps: BrowserDeps, verifyOnly = false) {
+  const job = startCartJob({ quote, verifyOnly }, false);
   await run(job, driver, deps);
   return job;
 }

@@ -4,6 +4,7 @@
 import type { Page } from 'playwright-core';
 import { ZUZ_CHAINS } from '../providers/zuz.ts';
 import { kvGet } from '../db.ts';
+import { parseDeliveryText, type DeliveryRead } from './delivery.ts';
 
 export type CartLineIn = { productId: string; quantity: number; name: string; byWeight?: boolean };
 export type AddResult = { added: string[]; failed: { productId: string; reason: string }[] };
@@ -19,6 +20,13 @@ export interface CartDriver {
   isLoggedIn(page: Page): Promise<boolean>;
   addItems(page: Page, lines: CartLineIn[]): Promise<AddResult>;
   readCart(page: Page): Promise<CartState>;
+  /** Delivery address / availability / fee / windows / minimum as the site itself shows them. Read-only. */
+  readDelivery(page: Page): Promise<DeliveryRead>;
+}
+
+/** Visible text of the page (what the user sees). */
+async function pageText(page: Page): Promise<string> {
+  return (await page.locator('body').innerText({ timeout: 10000 }).catch(() => '')).slice(0, 40000);
 }
 
 // ---------- Shufersal (Hybris): POST /online/he/cart/add with the XSRF token, like the "הוסף לסל" button ----------
@@ -63,6 +71,12 @@ const shufersal: CartDriver = {
     const m = body.match(/לתשלום\s*:?\s*[₪]?\s*([\d,.]+)/) ?? body.match(/שקלים חדשים\s*([\d,.]+)/);
     const slot = body.match(/(יום[^\n]{0,30}\d{1,2}\/\d{1,2}[^\n]{0,30}\d{1,2}:\d{2})/);
     return { total: m ? parseFloat(m[1].replace(/,/g, '')) : undefined, deliveryWindow: slot?.[1] };
+  },
+  async readDelivery(page) {
+    // The cart page shows the delivery address, fee and the chosen / offered delivery slot for the logged-in account.
+    if (!page.url().startsWith(this.cartUrl)) await page.goto(this.cartUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    return parseDeliveryText(await pageText(page));
   },
 };
 
@@ -118,6 +132,11 @@ const ramilevy: CartDriver = {
       return { itemCount: Array.isArray(j?.items) ? j.items.length : undefined, total: Number.isFinite(total) ? total : undefined };
     }).catch(() => ({}));
   },
+  async readDelivery(page) {
+    // The site shows the selected delivery address and slot in the header / cart panel for the logged-in account.
+    await page.waitForTimeout(1500);
+    return parseDeliveryText(await pageText(page));
+  },
 };
 
 // ---------- Stor.ai "ZuZ" chains (AngularJS): the site's own Cart service, which syncs to the account ----------
@@ -168,6 +187,9 @@ function zuzDriver(id: string, host: string): CartDriver {
           return { itemCount: Object.keys(Cart.lines ?? {}).length, total: Number.isFinite(total) ? total : undefined };
         } catch { return {}; }
       }).catch(() => ({}));
+    },
+    async readDelivery(page) {
+      return parseDeliveryText(await pageText(page));
     },
   };
 }

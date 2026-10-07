@@ -330,9 +330,18 @@ export function basketKey(b: Basket): string {
   return b.items.filter((i) => i.accepted && i.condition?.met !== false).map((i) => `${i.needId}:${i.quantity}:${i.lockedByUser ? i.product?.productId : ''}`).sort().join('|');
 }
 
-export async function prepareProviderCart(providerId?: string) {
+export async function prepareProviderCart(providerId?: string, verifyOnly = false) {
   const { quoteOne } = await import('./engine/compare.ts');
   const { startCartJob } = await import('./cart/prepare.ts');
+  if (verifyOnly) {
+    // Only open the supermarket and read delivery to the household's address — nothing is added to the cart.
+    const p = householdProviders(store.household()).find((x) => x.id === providerId && x.kind === 'online');
+    if (!p) throw new Error('הרשת הזאת לא ברשימת הרשתות שלכם');
+    return startCartJob({ verifyOnly: true, quote: {
+      providerId: p.id, providerName: p.name, kind: 'online', ok: true, lines: [], subtotal: 0, deliveryFee: p.deliveryFee, deliveryFeeEstimated: true,
+      total: 0, completeness: 0, unavailableCount: 0, substitutionsCount: 0, source: 'live', fetchedAt: nowIso(),
+    } });
+  }
   const b = store.basket();
   if (!b || b.status !== 'building' || !b.items.length) throw new Error('אין סל פעיל להכין ממנו עגלה');
   const cmp = store.comparison();

@@ -24,6 +24,29 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
   );
 }
 
+/** The delivery address supermarket sites are checked against (exact-address verification needs street + number). */
+function AddressRow({ ctx }: { ctx: Ctx }) {
+  const h = ctx.state.household!;
+  const [edit, setEdit] = useState(false);
+  const [city, setCity] = useState(h.homeAddress.city);
+  const [street, setStreet] = useState(h.homeAddress.street ?? '');
+  if (!edit) {
+    return (
+      <div className="spread small">
+        <span>כתובת למשלוח: <b>{[h.homeAddress.street, h.homeAddress.city].filter(Boolean).join(', ')}</b>{!h.homeAddress.street && <span className="faint"> · חסרים רחוב ומספר לאימות משלוח</span>}</span>
+        <button className="link" onClick={() => setEdit(true)}>עריכה</button>
+      </div>
+    );
+  }
+  return (
+    <div className="stack">
+      <input className="field" placeholder="עיר" value={city} onChange={(e) => setCity(e.target.value)} />
+      <input className="field" placeholder="רחוב ומספר בית" value={street} onChange={(e) => setStreet(e.target.value)} />
+      <button className="btn" disabled={city.trim().length < 2} onClick={async () => { ctx.setState(await api.patchHousehold({ homeAddress: { city: city.trim(), street: street.trim() || undefined } })); setEdit(false); }}>שמור כתובת</button>
+    </div>
+  );
+}
+
 function Learned({ ctx }: { ctx: Ctx }) {
   const { state, setState, toast } = ctx;
   const h = state.household!;
@@ -50,6 +73,7 @@ function Learned({ ctx }: { ctx: Ctx }) {
       <div className="card stack">
         <div className="spread"><b>🏠 הבית</b><span className="muted small">{h.adults} מבוגרים{h.children.length ? ` · ${h.children.length} ילדים` : ''} · {h.homeAddress.city}</span></div>
         {constraints.length > 0 && <div className="chips">{constraints.map((c) => <span key={c} className="chip on">🛡️ {c}</span>)}</div>}
+        <AddressRow ctx={ctx} />
         <div className="spread small"><span>רף חיסכון לנסיעה לסופר</span>
           <div className="chips">{[30, 60, 100].map((v) => <button key={v} className={`chip ${h.driveSavingsThresholdNis === v ? 'on' : ''}`} onClick={async () => setState(await api.patchHousehold({ driveSavingsThresholdNis: v }))}>₪{v}</button>)}</div>
         </div>

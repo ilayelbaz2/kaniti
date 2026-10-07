@@ -140,7 +140,7 @@ export function Onboarding({ onDone }: { onDone: (s: AppState) => void }) {
           <h1>מאיפה בכלל אפשר להביא לכם קניות? 🚚</h1>
           <div className="stack">
             <input className="field" placeholder="עיר (למשל: רמת גן)" value={city} onChange={(e) => { setCity(e.target.value); setDelivery(null); }} />
-            <input className="field" placeholder="רחוב ומספר (לא חובה)" value={street} onChange={(e) => setStreet(e.target.value)} />
+            <input className="field" placeholder="רחוב ומספר בית (לאימות משלוח לכתובת)" value={street} onChange={(e) => setStreet(e.target.value)} />
             <button className="btn" disabled={city.trim().length < 2 || checking} onClick={checkDelivery}>{checking ? 'בודק מי שולח אליכם…' : 'בדוק מי שולח אליי'}</button>
           </div>
           {checking && <div className="stages"><div className="on">בודק מי שולח אליכם…</div></div>}
@@ -151,7 +151,7 @@ export function Onboarding({ onDone }: { onDone: (s: AppState) => void }) {
                 <button key={d.providerId} className={`provider-row ${chosen.includes(d.providerId) ? 'on' : ''}`} onClick={() => toggle(chosen, d.providerId, setChosen)}>
                   <span className="check">{chosen.includes(d.providerId) ? '✓' : ''}</span>
                   <span className="grow">
-                    <div className="row"><b>{d.name}</b>{d.status === 'confirmed' ? <span className="tag live">משלוח מאומת</span> : d.status === 'likely' || d.delivers === true ? <span className="tag live">כנראה משלחים</span> : d.status === 'unavailable' || d.delivers === false ? <span className="tag need">לא באזור</span> : <span className="tag estimate">לא אומת</span>}</div>
+                    <div className="row"><b>{d.name}</b>{d.delivers === true ? <span className="tag estimate">יש סניף בעיר — הכתובת תיבדק באתר</span> : <span className="tag estimate">לא אומת</span>}</div>
                     <div className="faint">{d.note}</div>
                   </span>
                 </button>

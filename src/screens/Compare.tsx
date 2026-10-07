@@ -3,6 +3,7 @@ import type { BasketQuote, Comparison } from '../../shared/types.ts';
 import type { Ctx } from '../App.tsx';
 import { api } from '../api.ts';
 import { nis, SourceTag } from '../components/ChatParts.tsx';
+import { DELIVERY_LABEL, deliveryTagClass } from './CartSheet.tsx';
 
 const STAGES = ['בודק מחירים בכל רשת…', 'מחשב משלוח ושלמות סל…', 'בוחר המלצה…'];
 
@@ -51,15 +52,13 @@ export function Compare({ ctx }: { ctx: Ctx }) {
           {q.error && <div className="faint">{q.error}</div>}
         </div>
       ))}
-      <div className="faint">"חי אונליין" = מחיר מאתר הרשת עכשיו. "קובץ מחירים רשמי" = קבצי שקיפות המחירים של הסניף (לא מחיר אונליין). דמי המשלוח לפי מחירון הרשת; הסכום הסופי נקבע בעגלה באתר הרשת.</div>
+      <div className="faint">"חי אונליין" = מחיר מאתר הרשת עכשיו. "קובץ מחירים רשמי" = קבצי שקיפות המחירים של הסניף (לא מחיר אונליין). דמי משלוח "לפי האתר" נקראו מאתר הרשת לכתובת שלכם; "הערכה" = מחירון הרשת. הסכום הסופי נקבע בעגלה באתר הרשת.</div>
       <button className="btn block" onClick={openConfirm}>קניתי — לאשר מה נקנה ✓</button>
     </div>
   );
 }
 
-const DELIVERY_LABEL = { confirmed: '✅ משלוח מאומת', likely: '🚚 כנראה משלחים אליכם', unknown: '❔ משלוח לא אומת', unavailable: '⛔ לא משלחים אליכם' } as const;
-
-function QuoteCard({ q, win, bestOnline, threshold, onCart }: { q: BasketQuote; win: boolean; bestOnline?: BasketQuote; threshold: number; onCart: (id: string) => void }) {
+function QuoteCard({ q, win, bestOnline, threshold, onCart }: { q: BasketQuote; win: boolean; bestOnline?: BasketQuote; threshold: number; onCart: (id: string, verifyOnly?: boolean) => void }) {
   const [open, setOpen] = useState(false);
   const pct = Math.round(q.completeness * 100);
   const missing = q.lines.filter((l) => l.missing && !l.uncertain);
@@ -74,7 +73,7 @@ function QuoteCard({ q, win, bestOnline, threshold, onCart }: { q: BasketQuote; 
       </div>
       <div className="spread">
         <span className="big-num">{q.kind === 'physical' ? '~' : ''}{nis(Math.round(q.total))}</span>
-        <span className="small muted">{q.kind === 'online' ? (q.deliveryFee ? `כולל משלוח ${nis(q.deliveryFee)}` : 'משלוח חינם') : 'איסוף עצמי'}</span>
+        <span className="small muted">{q.kind === 'online' ? (q.deliveryFeeEstimated ? `כולל משלוח ~${nis(q.deliveryFee)} (הערכה)` : q.deliveryFee ? `כולל משלוח ${nis(q.deliveryFee)} (לפי האתר)` : 'משלוח חינם (לפי האתר)') : 'איסוף עצמי'}</span>
       </div>
       <div className="row small"><div className="bar grow"><div style={{ width: `${pct}%` }} /></div><span>{pct}% מהסל</span></div>
       <div className="row wrap small muted">
@@ -88,12 +87,22 @@ function QuoteCard({ q, win, bestOnline, threshold, onCart }: { q: BasketQuote; 
           {saving > 0 ? `חיסכון ~${nis(saving)} מול האונליין. הרף שלך לנסיעה: ${nis(threshold)} → ${saving >= threshold ? 'שווה לשקול נסיעה' : 'לא שווה לנסוע'}` : 'לא זול יותר מהאונליין'}
         </div>
       )}
+      {q.kind === 'online' && q.delivery && (q.delivery.confirmedAddressText || q.delivery.deliveryWindows?.length || q.delivery.restrictionMessage) && (
+        <div className="small muted">
+          {q.delivery.confirmedAddressText && <div>📍 {q.delivery.confirmedAddressText}</div>}
+          {q.delivery.deliveryWindows?.length ? <div>🕒 {q.delivery.deliveryWindows.slice(0, 2).join(' · ')}</div> : null}
+          {q.delivery.minimumOrder !== undefined && !q.minOrderIssue && <div>מינימום הזמנה {nis(q.delivery.minimumOrder)}</div>}
+          {q.delivery.restrictionMessage && <div>⚠️ {q.delivery.restrictionMessage}</div>}
+          <div className="faint">נבדק באתר {new Date(q.delivery.checkedAt).toLocaleDateString('he-IL')}</div>
+        </div>
+      )}
       <div className="row wrap small">
-        {q.kind === 'online' && q.deliveryStatus && <span className="tag need">{DELIVERY_LABEL[q.deliveryStatus]}</span>}
+        {q.kind === 'online' && q.deliveryStatus && <span className={`tag ${deliveryTagClass(q.deliveryStatus)}`}>{DELIVERY_LABEL[q.deliveryStatus]}</span>}
         {q.kind === 'online' && <span className={`tag ${q.cartSupported ? 'live' : 'need'}`}>{q.cartSupported ? '🛒 הכנת עגלה נתמכת' : 'הכנת עגלה לא זמינה'}</span>}
         <span className="faint">עודכן {new Date(q.fetchedAt).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
       </div>
-      {q.kind === 'online' && q.cartSupported && <button className={`btn ${win ? '' : 'ghost'}`} onClick={() => onCart(q.providerId)}>הכן עגלה ב{q.providerName.replace(' אונליין', '').replace(' · דמו', '')} 🛒</button>}
+      {q.kind === 'online' && q.cartSupported && q.deliveryStatus !== 'unavailable' && <button className={`btn ${win ? '' : 'ghost'}`} onClick={() => onCart(q.providerId)}>הכן עגלה ב{q.providerName.replace(' אונליין', '').replace(' · דמו', '')} 🛒</button>}
+      {q.kind === 'online' && q.cartSupported && q.deliveryStatus !== 'confirmed' && <button className="link" style={{ alignSelf: 'flex-start' }} onClick={() => onCart(q.providerId, true)}>בדוק משלוח לכתובת שלי באתר הרשת</button>}
       <button className="link" style={{ alignSelf: 'flex-start' }} onClick={() => setOpen(!open)}>{open ? 'סגור פירוט' : 'פתח פירוט'}</button>
       {open && (
         <div>

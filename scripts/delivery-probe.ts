@@ -33,7 +33,7 @@ const IN_PAGE = `(async () => {
   function src(f) { return f ? String(f).replace(/\\s+/g, ' ').slice(0, 700) : null; }
   var Config = get('Config'), Cart = get('Cart'), User = get('User'), Areas = get('SpDeliveryAreasService'), Br = get('BranchesService');
   var cfg = {}; Object.keys(Config).filter(function (k) { return k !== 'retailer' && k !== 'retailers'; }).forEach(function (k) { cfg[k] = shape(Config[k], 1); });
-  out.config = cfg;
+  out.config = cfg; out.cfgFlags = { isAreaSelectedByUser: Config.isAreaSelectedByUser, isUserDefaultArea: Config.isUserDefaultArea, branchId: Config.branch && Config.branch.id, branchAreaId: Config.branchAreaId, area: shape(Config.area, 0) };
   var st = (Config.retailer && Config.retailer.settings) || {}; var s2 = {};
   Object.keys(st).forEach(function (k) { if (/area|deliver|address|min|slot|fee|ship|time|precis/i.test(k)) s2[k] = shape(st[k], 1); });
   out.retailerSettings = s2;
@@ -60,14 +60,14 @@ const IN_PAGE = `(async () => {
   return out;
 })()`;
 const dump = await page.evaluate(IN_PAGE) as Record<string, unknown>;
-for (const [k, v] of Object.entries(dump)) console.log('PROBE-' + k, JSON.stringify(v).slice(0, 6000));
+for (const [k, v] of Object.entries(dump)) console.log('PROBE-' + k, String(JSON.stringify(v)).slice(0, 6000));
 const { cartDriver } = await import('../server/cart/drivers.ts');
 const { zuzProvider } = await import('../server/providers/zuz.ts');
 const rows = await zuzProvider(chain).searchProducts('חלב').catch(() => []);
 if (rows[0]) await cartDriver(id)!.addItems(page, [{ productId: rows[0].productId, quantity: 1, name: rows[0].name }]).catch((e) => console.log('add failed', String(e)));
 await page.waitForTimeout(3000);
 const after = await page.evaluate(IN_PAGE) as Record<string, unknown>;
-console.log('PROBE-AFTER-cartValues', JSON.stringify(after.cartValues).slice(0, 6000));
-console.log('PROBE-AFTER-branchArea', JSON.stringify(after.branchArea).slice(0, 2000));
+console.log('PROBE-AFTER-cartValues', String(JSON.stringify(after.cartValues)).slice(0, 6000));
+console.log('PROBE-AFTER-branchArea', String(JSON.stringify(after.branchArea)).slice(0, 2000));
 await closeBrowser();
 process.exit(0);

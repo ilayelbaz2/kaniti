@@ -35,11 +35,27 @@ Compare → **הכן עגלה ב…** (or in chat: "תכין לי עגלה בש�
 1. Kaniti opens a real Chrome window **on the computer that runs Kaniti** (install Google Chrome; or set `KANITI_CHROME_PATH`).
 2. If the supermarket needs you to log in — or shows a CAPTCHA / SMS code — you do it yourself in that window.
    Kaniti waits and continues on its own. It never sees or stores your password.
-3. Kaniti puts every confidently-matched item into the supermarket's own cart, using the same cart calls the website
+3. **Delivery address.** If the site has no delivery address attached (or a different one), Kaniti asks you to choose /
+   confirm *your* address in that window and waits. It then reads what the site itself shows — the selected address,
+   whether it delivers there, the delivery fee, delivery windows, minimum order and any restriction — and labels it:
+   `משלוח לכתובת שלך מאומת` (confirmed) · `הרשת לא שולחת כרגע לכתובת הזו` (unavailable — nothing is added) ·
+   `צריך לבחור/לאשר כתובת באתר הסופר` (user action required) · `לא הצלחתי לאמת משלוח לכתובת` (unknown).
+   "Confirmed" requires the site to show the household's street, house number and city **and** accept delivery there
+   (offered delivery slots / an explicit acceptance). A city or a nearby branch is never treated as proof.
+4. Kaniti puts every confidently-matched item into the supermarket's own cart, using the same cart calls the website
    makes, and stops at the cart page. Doubtful matches are **not** added — you'll see them listed.
-4. You get "העגלה מוכנה" with the store's own total and a button to open the cart. **Checkout and payment happen only
+   After adding, it re-reads the delivery state: if the address on the site changed meanwhile, or can't be read, the
+   cart is **not** shown as tied to your address.
+5. You get "העגלה מוכנה" with the delivery status, the address the site uses, item count, missing items,
+   substitutions, the store's own total, the real delivery fee (or a labelled list-price estimate when the site
+   didn't show one), the delivery slot, and a button to continue on the site. **Checkout and payment happen only
    on the supermarket's site/app.** When logged in, the cart is in your account, so you can also finish on your phone.
-5. "סיימתי להזמין" opens the purchase confirmation, pre-filled from the prepared cart.
+6. "סיימתי להזמין" opens the purchase confirmation, pre-filled from the prepared cart.
+
+Compare → **בדוק משלוח לכתובת שלי באתר הרשת** runs steps 1–3 only (nothing is added to the cart). Verified results
+are kept per chain for 14 days, only as a display-safe address (street, number, city — no names, phones or apartment)
+and only for the address they were checked against; changing the household address invalidates them.
+Edit the address in **הבית** (street and house number are required for exact-address verification).
 
 Logins stay in a dedicated browser profile (`data/browser-profile/`, git-ignored), managed by Chrome itself.
 On a computer without a screen, cart preparation that needs a login fails with a clear message.
@@ -63,6 +79,9 @@ npm run live-check -- "רמת גן"    # real sites: delivery, search, promos, b
 npm run cart-check -- tivtaam     # fills a real cart at the supermarket and reads it back (stops at the cart)
 npm run rehearsal -- "רמת גן"     # two full shopping cycles on real data for the household profile
 npm run match-report              # dumps real search results per household item (for matching regression tests)
+npm run home-validation           # AT HOME, server stopped: per chain — live basket quote, you log in / pick your address
+                                  # in Chrome, Kaniti reads delivery from the site, prepares the cart, re-checks the address.
+                                  # Writes data/home-validation.md. `-- tivtaam --verify-only` checks delivery only.
 ```
 
 All of these also run in GitHub Actions (`.github/workflows/live-check.yml`).
@@ -113,11 +132,13 @@ against real published files in `tests/fixtures/`.
 
 ### Honest limitations
 
-- **Delivery eligibility**: there's no public address-level API for most chains. Rami Levy and the ZuZ chains are
-  checked against their branch lists by city; Shufersal Online is assumed to deliver (it covers most of the
-  country) and says so. The onboarding lets you correct the list.
-- **Delivery fees / minimum order** come from each chain's published price list, not from a real cart (carts need a
-  logged-in account). The Compare screen says this.
+- **Delivery eligibility** is only ever "confirmed" from the supermarket's own page in your browser session (see
+  above). The onboarding check is city-level (branch lists) and is shown only as a hint, never as confirmation.
+- **Delivery fees / minimum order** come from the supermarket page once it has been checked for your address;
+  until then the chain's list price is used and labelled "הערכה".
+- Reading the delivery state relies on each site's current page. ZuZ chains are read from the site's own app state;
+  Shufersal and Rami Levy from the visible cart page text. If a site changes its page, the result is "unknown",
+  never "confirmed".
 - **"Live"** means the price came from the chain's online catalog at that moment — it is not a checkout.
 - **Product matching** is rule-based (name fit, pack-size hints, look-alike exclusions). Branch files use terse,
   abbreviated names, so an occasional odd pick is possible — replace it once in the basket and the app remembers.

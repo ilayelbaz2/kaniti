@@ -25,7 +25,7 @@ export type Ctx = {
   refresh: () => Promise<void>;
   go: (t: Tab) => void;
   openConfirm: () => void;
-  openCart: (providerId?: string) => void;
+  openCart: (providerId?: string, verifyOnly?: boolean) => void;
   toast: (t: string) => void;
   sendChat: (text: string, label?: string) => Promise<void>;
   messages: ChatMessage[];
@@ -39,7 +39,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>(tabFromHash());
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [cartFor, setCartFor] = useState<{ providerId?: string } | null>(null);
+  const [cartFor, setCartFor] = useState<{ providerId?: string; verifyOnly?: boolean } | null>(null);
   const [toastText, setToastText] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
@@ -84,7 +84,7 @@ export function App() {
   if (!state) return <div className="screen stack"><div className="skeleton" /><div className="skeleton" /></div>;
   if (!state.household?.onboardedAt) return <Onboarding onDone={(s) => { setState(s); go('chat'); }} />;
 
-  const ctx: Ctx = { state, setState, refresh, go, openConfirm: () => setConfirmOpen(true), openCart: (providerId?: string) => setCartFor({ providerId }), toast, sendChat, messages, busy };
+  const ctx: Ctx = { state, setState, refresh, go, openConfirm: () => setConfirmOpen(true), openCart: (providerId?: string, verifyOnly?: boolean) => setCartFor({ providerId, verifyOnly }), toast, sendChat, messages, busy };
   const count = state.basket?.status === 'building' ? state.basket.items.filter((i) => i.accepted && i.condition?.met !== false).length : 0;
 
   return (
@@ -106,7 +106,7 @@ export function App() {
         </div>
       </nav>
       {confirmOpen && <ConfirmSheet ctx={ctx} onClose={() => setConfirmOpen(false)} />}
-      {cartFor && <CartSheet ctx={ctx} providerId={cartFor.providerId} onClose={() => { setCartFor(null); void refresh(); }} />}
+      {cartFor && <CartSheet ctx={ctx} providerId={cartFor.providerId} verifyOnly={cartFor.verifyOnly} onClose={() => { setCartFor(null); void refresh(); }} />}
       {toastText && <div className="toast">{toastText}</div>}
     </div>
   );

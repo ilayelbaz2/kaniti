@@ -50,7 +50,7 @@ export const ramilevy: GroceryProvider = {
     const local = delivering.find((s) => sameCity(s.city, address.city)) ?? all.find((s) => s.internet_store_id && sameCity(s.city, address.city));
     if (local?.internet_store_id) {
       kvSet('provider:ramilevy:store', local.internet_store_id);
-      return { providerId: 'ramilevy', status: 'likely', delivers: true, checkedLive: true, deliveryFee: 29.9, minOrder: 250, note: `יש סניף משלוחים ב${local.city} (${local.name}) — לפי העיר, לא אומת מול הכתובת` };
+      return { providerId: 'ramilevy', status: 'unknown', delivers: true, checkedLive: true, deliveryFee: 29.9, minOrder: 250, note: `יש סניף משלוחים ב${local.city} (${local.name}) — לפי העיר, לא אומת מול הכתובת` };
     }
     return {
       providerId: 'ramilevy', status: 'unknown', delivers: null, checkedLive: true, deliveryFee: 29.9, minOrder: 250,
