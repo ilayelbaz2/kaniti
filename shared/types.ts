@@ -43,6 +43,7 @@ export type HouseholdNeed = {
   lastPurchasedQty?: number; // stock units
   lastProductName?: string;
   neverSuggest?: boolean;
+  staple?: 'always' | 'sometimes'; // "don't want to run out" — separate from how often it is bought
   removedCount: number; // removed from generated baskets (learning)
   dismissedDeals: number;
   flexConfidence: number; // 0..1: how sure we are about flexibility
@@ -54,12 +55,16 @@ export type BasketStatus = 'need' | 'opportunity' | 'discovery';
 export type ResolvedProduct = {
   providerId: string;
   productId: string;
-  name: string;
+  name: string; // raw provider name — also the matching key for the household's usual product
   brand?: string;
+  sizeText?: string;
+  byWeight?: boolean;
   price: number; // effective price per pack, after promo if applicable
   regularPrice?: number;
   unitPriceText?: string;
   promoText?: string;
+  promoMinQty?: number;
+  promoEndsAt?: string;
   live: boolean;
 };
 
@@ -124,13 +129,26 @@ export type LearningEvent = {
   createdAt: string;
 };
 
+export type PurchaseItem = {
+  needId: string; label: string; emoji: string; quantity: number; unit: string; productName?: string; price?: number; status: BasketStatus;
+  brand?: string; sizeText?: string; providerId?: string; productId?: string;
+  regularPrice?: number; promoMinQty?: number; promoEndsAt?: string; // promo actually used
+  usualProductName?: string; usualPrice?: number; // substitution vs the usual product (same scan)
+  stockBefore?: number; // estimated stock units at purchase time
+};
+
 export type Purchase = {
   id: string;
   createdAt: string;
   storeName: string;
   providerId?: string;
   total: number;
-  items: { needId: string; label: string; emoji: string; quantity: number; unit: string; productName?: string; price?: number; status: BasketStatus }[];
+  items: PurchaseItem[];
+  deliveryFee?: number;
+  deliveryFeeEstimated?: boolean;
+  priceSource?: PriceSource;
+  /** The comparison that was on screen when buying — used only for measured savings. */
+  atPurchase?: { fresh: boolean; chosenTotal: number; chosenCompleteness: number; nextBest?: { providerId: string; providerName: string; total: number; completeness: number } };
   dealsUsed: number;
   substitutions: number;
   removed?: { needId: string; label: string }[]; // suggested but not bought
@@ -157,6 +175,22 @@ export type ProductSearchResult = {
   available: boolean;
   source: PriceSource;
   fetchedAt: string;
+  byWeight?: boolean;
+  promoEndsAt?: string; // ISO date, when the provider publishes it
+};
+
+/** One observed price for a household need at a provider on a date — for learning cheap weekdays. */
+export type PriceSnapshot = {
+  localDate: string; // YYYY-MM-DD, Asia/Jerusalem
+  weekday: number; // 0=Sunday
+  weekKey: string; // ISO week, e.g. 2026-W41
+  providerId: string;
+  needId: string;
+  unitPrice: number;
+  regularPrice?: number;
+  deliveryFee?: number;
+  deliveryFeeKnown: boolean;
+  source: PriceSource;
 };
 
 /** Delivery to the household's address, as the supermarket's own page shows it. Never inferred from city/branch. */
