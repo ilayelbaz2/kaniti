@@ -7,7 +7,7 @@ on:
         description: City to check delivery / branches for
         default: רמת גן
   push:
-    paths: ['server/providers/**', 'scripts/**', '.github/workflows/live-check.yml']
+    paths: ['server/providers/**', 'server/cart/**', 'server/catalog.ts', 'server/engine/match.ts', 'scripts/**', '.github/workflows/live-check.yml']
 jobs:
   live:
     runs-on: ubuntu-latest
@@ -21,7 +21,13 @@ jobs:
       - run: npx tsx scripts/live-check.ts "${{ github.event.inputs.city || 'רמת גן' }}"
       - run: npx tsx scripts/match-report.ts
         continue-on-error: true
+      - run: KANITI_BROWSER_HEADLESS=1 npx tsx scripts/cart-check.ts tivtaam
+        continue-on-error: true
       - if: always()
         uses: actions/upload-artifact@v4
-        with: { name: live-check, path: 'data/*.md
-data/*.json', if-no-files-found: ignore }
+        with:
+          name: live-check
+          if-no-files-found: ignore
+          path: |
+            data/*.md
+            data/*.json

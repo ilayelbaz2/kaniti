@@ -1,6 +1,8 @@
 node_modules
 dist
 data/*.db*
+data/browser-profile*
+data/cache
 *.log
 .env
 test-results
